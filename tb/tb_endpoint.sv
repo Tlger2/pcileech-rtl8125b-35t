@@ -18,13 +18,11 @@ module tb_endpoint;
     // tx_done is never missed by an @(posedge …) that happens to arm after
     // the pulse has already resolved in the same timestep. Plain `always`
     // (not always_ff) because the initial block also clears these — the
-    // multi-driver rule only bites inside always_ff.
+    // multi-driver rule only bites inside always_ff. The driving `always`
+    // block lives farther down, after frame_done and tx_done are declared
+    // (XSim 2026.1 enforces declare-before-use inside procedural code).
     logic frame_done_sticky = 1'b0;
     logic tx_done_sticky    = 1'b0;
-    always @(posedge clk) begin
-        if (frame_done) frame_done_sticky = 1'b1;
-        if (tx_done)    tx_done_sticky    = 1'b1;
-    end
 
     `define CHECK(cond, msg)                                               \
         begin                                                              \
@@ -136,6 +134,14 @@ module tb_endpoint;
 
     logic [31:0] hdr_dw0, hdr_dw1, hdr_dw2;
     logic        tx_start, tx_busy, tx_done;
+
+    // Sticky-flag driver (declarations are at the top of the module).
+    // Captures a one-cycle pulse on frame_done / tx_done so the test
+    // sequencer can wait on it without racing against the pulse's fall.
+    always @(posedge clk) begin
+        if (frame_done) frame_done_sticky = 1'b1;
+        if (tx_done)    tx_done_sticky    = 1'b1;
+    end
 
     pcie_cpld_axis_tx_mux #(
         .LEN_W (10),
