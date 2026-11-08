@@ -24,7 +24,7 @@ module pci_type0_cfg_header #(
     parameter logic [23:0] CLASS_CODE       = 24'h020000,
     parameter logic [15:0] SUBSYS_VENDOR_ID = 16'h10EC,
     parameter logic [15:0] SUBSYS_ID        = 16'h0123,
-    parameter logic [31:0] BAR0_SIZE_MASK   = 32'hFFFF_0000,  // 64 KiB
+    parameter logic [31:0] BAR0_SIZE_MASK   = 32'hFFFF_C000,  // 16 KiB (RTL8125B)
     parameter logic [31:0] BAR1_SIZE_MASK   = 32'hFFFF_FFFF,
     parameter logic [31:0] BAR2_SIZE_MASK   = 32'hFFFF_F000,  // 4 KiB
     parameter logic [7:0]  CAP_PTR          = 8'h40

@@ -7,7 +7,7 @@
 //   BAR2 = 32-bit non-prefetchable, 4 KiB
 
 module pcie_bar_decoder #(
-    parameter int BAR0_LOG2_SIZE = 16,  // 2^16 = 64 KiB
+    parameter int BAR0_LOG2_SIZE = 14,  // 2^14 = 16 KiB (RTL8125B)
     parameter int BAR2_LOG2_SIZE = 12   // 2^12 = 4 KiB
 ) (
     input  logic        mse,
