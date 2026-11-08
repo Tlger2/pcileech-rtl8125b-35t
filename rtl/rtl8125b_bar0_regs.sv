@@ -202,4 +202,3 @@ module rtl8125b_bar0_regs #(
     end
 
 endmodule
-
