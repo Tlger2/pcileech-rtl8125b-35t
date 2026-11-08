@@ -1,4 +1,5 @@
-// Self-checking testbench for ft601_cmd_parser and pcie_cpld_axis_tx_mux.
+// Self-checking endpoint testbench: parser, CplD mux, config/BAR decode,
+// and the RTL8125B operational BAR0 register footprint.
 // XSim-compatible; no UVM, no interfaces.
 
 `timescale 1ns / 1ps
@@ -242,6 +243,63 @@ module tb_endpoint;
         .bar_offset_32 ()
     );
 
+    // ============== Phase E: RTL8125B BAR0 registers ============
+    logic        bar0_wr_en, bar0_rd_en;
+    logic [15:0] bar0_addr;
+    logic [31:0] bar0_wdata, bar0_rdata;
+    logic [3:0]  bar0_wstrb;
+    logic        bar0_rd_valid;
+    logic [31:0] bar0_intr_set;
+    logic        bar0_irq_pending;
+    logic [47:0] bar0_mac_address;
+    logic [63:0] bar0_tx_desc_base, bar0_txh_desc_base, bar0_rx_desc_base;
+    logic [7:0]  bar0_chip_cmd;
+
+    rtl8125b_bar0_regs #(
+        .MAC_ADDR          (48'h02_12_25_35_00_01),
+        .RESET_CLEAR_CYCLES(4)
+    ) u_bar0_regs (
+        .clk               (clk),
+        .rst_n             (rst_n),
+        .mmio_wr_en        (bar0_wr_en),
+        .mmio_rd_en        (bar0_rd_en),
+        .mmio_addr         (bar0_addr),
+        .mmio_wdata        (bar0_wdata),
+        .mmio_wstrb        (bar0_wstrb),
+        .mmio_rdata        (bar0_rdata),
+        .mmio_rd_valid     (bar0_rd_valid),
+        .intr_set          (bar0_intr_set),
+        .irq_pending       (bar0_irq_pending),
+        .mac_address       (bar0_mac_address),
+        .tx_desc_base      (bar0_tx_desc_base),
+        .tx_high_desc_base (bar0_txh_desc_base),
+        .rx_desc_base      (bar0_rx_desc_base),
+        .chip_cmd          (bar0_chip_cmd)
+    );
+
+    task automatic bar0_write_dw(input logic [15:0] addr,
+                                 input logic [31:0] data,
+                                 input logic [3:0] strb);
+        @(posedge clk);
+        bar0_wr_en <= 1'b1;
+        bar0_addr  <= addr;
+        bar0_wdata <= data;
+        bar0_wstrb <= strb;
+        @(posedge clk);
+        bar0_wr_en <= 1'b0;
+        bar0_wstrb <= 4'h0;
+    endtask
+
+    task automatic bar0_read_dw(input logic [15:0] addr,
+                                output logic [31:0] data);
+        @(posedge clk);
+        bar0_rd_en <= 1'b1;
+        bar0_addr  <= addr;
+        @(posedge clk);
+        data = bar0_rdata;
+        bar0_rd_en <= 1'b0;
+    endtask
+
     task automatic inject_mrd(
         input logic [15:0] req_id,
         input logic [7:0]  tag,
@@ -324,6 +382,12 @@ module tb_endpoint;
         cfg_be           = 4'h0;
         cfg_wdata        = 32'h0;
         bar_tlp_addr     = 64'h0;
+        bar0_wr_en        = 1'b0;
+        bar0_rd_en        = 1'b0;
+        bar0_addr         = 16'h0;
+        bar0_wdata        = 32'h0;
+        bar0_wstrb        = 4'h0;
+        bar0_intr_set     = 32'h0;
 
         rst_n = 1'b0;
         repeat (5) @(posedge clk);
@@ -536,6 +600,90 @@ module tb_endpoint;
             `CHECK(bar_hit == 1'b1, "D.6 BAR2 hit with MSE=1")
             `CHECK(bar_idx == 2'd2, "D.6 hit index = BAR2")
             `CHECK(bar_offset_lo == 16'h0ABC, "D.6 BAR2 offset = 0xABC")
+        end
+
+        // =============================================================
+        // PHASE E — RTL8125B driver-initialization register footprint
+        // =============================================================
+        $display("\n==== PHASE E: RTL8125B BAR0 registers ====");
+        begin
+            logic [31:0] dw;
+
+            // E.1 Stable EEPROM-style MAC contents in MMIO byte order.
+            bar0_read_dw(16'h0000, dw);
+            `CHECK(dw == 32'h3525_1202, "E.1 MAC0 bytes 02:12:25:35")
+            bar0_read_dw(16'h0004, dw);
+            `CHECK(dw[15:0] == 16'h0100, "E.1 MAC4 bytes 00:01")
+            `CHECK(bar0_mac_address == 48'h02_12_25_35_00_01,
+                   "E.1 canonical MAC output")
+
+            // E.2 Linux r8169 derives XID=(TxConfig>>20)&0xFCF.
+            bar0_read_dw(16'h0040, dw);
+            `CHECK(((dw >> 20) & 32'h0000_0FCF) == 32'h0000_0641,
+                   "E.2 TxConfig identifies RTL8125B XID 0x641")
+            bar0_write_dw(16'h0040, 32'h0300_0700, 4'hF);
+            bar0_read_dw(16'h0040, dw);
+            `CHECK(((dw >> 20) & 32'h0000_0FCF) == 32'h0000_0641,
+                   "E.2 TxConfig write preserves read-only XID")
+            `CHECK((dw & ~32'hFCF0_0000) == (32'h0300_0700 & ~32'hFCF0_0000),
+                   "E.2 writable TxConfig bits round-trip")
+            bar0_write_dw(16'h0044, 32'h0000_E70F, 4'hF);
+            bar0_read_dw(16'h0044, dw);
+            `CHECK(dw == 32'h0000_E70F, "E.2 RxConfig round-trip")
+
+            // E.3 Program all driver-visible descriptor base pairs.
+            bar0_write_dw(16'h0020, 32'h5566_7788, 4'hF);
+            bar0_write_dw(16'h0024, 32'h1122_3344, 4'hF);
+            bar0_write_dw(16'h0028, 32'hDDEE_FF00, 4'hF);
+            bar0_write_dw(16'h002C, 32'h99AA_BBCC, 4'hF);
+            bar0_write_dw(16'h00E4, 32'h89AB_CDEF, 4'hF);
+            bar0_write_dw(16'h00E8, 32'h0123_4567, 4'hF);
+            `CHECK(bar0_tx_desc_base == 64'h1122_3344_5566_7788,
+                   "E.3 TX descriptor base")
+            `CHECK(bar0_txh_desc_base == 64'h99AA_BBCC_DDEE_FF00,
+                   "E.3 high-priority TX descriptor base")
+            `CHECK(bar0_rx_desc_base == 64'h0123_4567_89AB_CDEF,
+                   "E.3 RX descriptor base")
+
+            // E.4 RTL8125 32-bit IMR/ISR; status is sticky and W1C.
+            bar0_write_dw(16'h0038, 32'h0000_0021, 4'hF);
+            @(posedge clk);
+            bar0_intr_set <= 32'h0000_0021;
+            @(posedge clk);
+            bar0_intr_set <= 32'h0000_0000;
+            @(posedge clk);
+            bar0_read_dw(16'h003C, dw);
+            `CHECK(dw == 32'h0000_0021, "E.4 IntrStatus captures events")
+            `CHECK(bar0_irq_pending == 1'b1, "E.4 masked event raises IRQ")
+            bar0_write_dw(16'h003C, 32'h0000_0001, 4'hF);
+            bar0_read_dw(16'h003C, dw);
+            `CHECK(dw == 32'h0000_0020, "E.4 IntrStatus write-one-to-clear")
+            bar0_write_dw(16'h0038, 32'h0000_0000, 4'hF);
+            #1;
+            `CHECK(bar0_irq_pending == 1'b0, "E.4 zero mask suppresses IRQ")
+
+            // E.5 CmdReset must assert, clear operational state, and then
+            // self-clear so the driver's bounded polling loop terminates.
+            bar0_write_dw(16'h0034, 32'h1000_0000, 4'b1000);
+            #1;
+            `CHECK(bar0_chip_cmd[4] == 1'b1, "E.5 CmdReset asserts")
+            repeat (5) @(posedge clk);
+            bar0_read_dw(16'h0034, dw);
+            `CHECK(dw[28] == 1'b0, "E.5 CmdReset self-clears")
+            `CHECK(bar0_tx_desc_base == 64'h0 && bar0_rx_desc_base == 64'h0,
+                   "E.5 reset clears descriptor bases")
+            bar0_read_dw(16'h0038, dw);
+            `CHECK(dw == 32'h0, "E.5 reset clears IntrMask")
+            bar0_read_dw(16'h0040, dw);
+            `CHECK(((dw >> 20) & 32'h0000_0FCF) == 32'h0000_0641,
+                   "E.5 reset preserves RTL8125B identity")
+            `CHECK(bar0_mac_address == 48'h02_12_25_35_00_01,
+                   "E.5 reset preserves MAC address")
+
+            // E.6 Driver can enable RX/TX with an 8-bit write at 0x37.
+            bar0_write_dw(16'h0034, 32'h0C00_0000, 4'b1000);
+            bar0_read_dw(16'h0034, dw);
+            `CHECK(dw[31:24] == 8'h0C, "E.6 ChipCmd RX/TX enable latches")
         end
 
         $display("\n================================================");
