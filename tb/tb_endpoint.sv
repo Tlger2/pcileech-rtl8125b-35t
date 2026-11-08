@@ -701,4 +701,3 @@ module tb_endpoint;
     end
 
 endmodule
-
