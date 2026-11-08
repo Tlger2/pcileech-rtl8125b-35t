@@ -68,8 +68,15 @@ module pcie_cpld_axis_tx_mux #(
     assign last_beat_partial = ~len_odd;
 
     assign beat_fire         = s_axis_tx_tvalid && s_axis_tx_tready;
-    assign need_more_payload = (pf_addr < len_q);
-    assign payload_rd_en     = (state == S_RUN) && need_more_payload && (pbuf_count < 2'd2);
+    // A read has a 1-cycle latency: when payload_rd_en_q is 1, a RAM
+    // response is in flight and will land next cycle. Treat pf_addr and
+    // pbuf_count as if the in-flight read has already committed, so we
+    // don't issue a redundant read that overshoots len_q and leaves the
+    // mux unable to fetch the final payload DW.
+    assign need_more_payload = ((pf_addr + {{(ADDR_W-1){1'b0}}, payload_rd_en_q}) < len_q);
+    assign payload_rd_en     = (state == S_RUN)
+                               && need_more_payload
+                               && ((pbuf_count + {1'b0, payload_rd_en_q}) < 2'd2);
     assign payload_rd_addr   = pf_addr;
 
     always_comb begin
