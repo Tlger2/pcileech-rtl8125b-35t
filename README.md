@@ -19,6 +19,9 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 | [rtl/pcie_msi_trigger.sv](rtl/pcie_msi_trigger.sv) | MSI request generator with CDC sync, pulse stretch, vector masking |
 | [rtl/ft601_cmd_parser.sv](rtl/ft601_cmd_parser.sv) | Parse command frames from the FT601 FIFO and drive a register file |
 | [rtl/ft601_resp_packager.sv](rtl/ft601_resp_packager.sv) | Frame read results / status into response packets for the FT601 TX FIFO |
+| [rtl/pcie_top_wrapper.sv](rtl/pcie_top_wrapper.sv) | Top-level that instantiates `pcie_7x_0` and the custom endpoint, with GT REFCLK + PERST# routing |
+| [tb/tb_endpoint.sv](tb/tb_endpoint.sv) | Self-checking XSim testbench — parser frames + CplD TX mux beat stream |
+| [host/ft601_client.py](host/ft601_client.py) | Python host-side driver (pyftdi) for the FT601 framed protocol |
 
 ## Command/response frame format
 

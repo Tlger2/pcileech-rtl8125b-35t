@@ -19,6 +19,21 @@ vivado*.backup.*
 *.mcs
 *.ltx
 
+## Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+## Sim
+*.vcd
+*.wdb
+xsim.dir/
+xvlog.log
+xelab.log
+xsim.log
+
 ## Editor / OS
 .vscode/
 .idea/
