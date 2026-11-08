@@ -1,0 +1,27 @@
+## Vivado
+*.jou
+*.log
+*.str
+*.xpr
+*.cache/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.srcs/
+*.gen/
+.Xil/
+vivado*.backup.*
+
+## Build outputs
+*.bit
+*.bin
+*.mcs
+*.ltx
+
+## Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
