@@ -107,4 +107,3 @@ The opcode scramble LUT is obfuscation, not encryption. A static byte-level
 substitution is trivially broken by a handful of known-plaintext pairs. Layer a real
 AEAD (AES-GCM, ChaCha20-Poly1305) on top of the framed payload if the link may be
 observed or injected into.
-
