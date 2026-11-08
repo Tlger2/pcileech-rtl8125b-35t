@@ -20,7 +20,7 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 | [rtl/ft601_cmd_parser.sv](rtl/ft601_cmd_parser.sv) | Parse command frames from the FT601 FIFO and drive a register file |
 | [rtl/ft601_resp_packager.sv](rtl/ft601_resp_packager.sv) | Frame read results / status into response packets for the FT601 TX FIFO |
 | [rtl/pcie_top_wrapper.sv](rtl/pcie_top_wrapper.sv) | Top-level that instantiates `pcie_7x_0` and the custom endpoint, with GT REFCLK + PERST# routing |
-| [tb/tb_endpoint.sv](tb/tb_endpoint.sv) | Self-checking XSim testbench — parser frames + CplD TX mux beat stream |
+| [tb/tb_endpoint.sv](tb/tb_endpoint.sv) | Self-checking XSim testbench — parser, CplD mux, config/BAR decode, and BAR0 register behavior |
 | [host/ft601_client.py](host/ft601_client.py) | Python host-side driver (pyftdi) for the FT601 framed protocol |
 | [rtl/pci_type0_cfg_header.sv](rtl/pci_type0_cfg_header.sv) | PCI Type 0 configuration space header (RTL8125B identity, BARs, Command/Status) |
 | [rtl/pci_cfg_space.sv](rtl/pci_cfg_space.sv) | Config-space router: header + PM/MSI/PCIe cap chain, with stub/full selector |
@@ -31,6 +31,7 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 | [rtl/caps/pci_cap_msi_stub.sv](rtl/caps/pci_cap_msi_stub.sv) | MSI Cap enumeration stub (read-only) |
 | [rtl/caps/pci_cap_pcie_stub.sv](rtl/caps/pci_cap_pcie_stub.sv) | PCIe Cap enumeration stub (read-only) |
 | [rtl/pcie_bar_decoder.sv](rtl/pcie_bar_decoder.sv) | BAR aperture match + Memory Space Enable (MSE) enforcement |
+| [rtl/rtl8125b_bar0_regs.sv](rtl/rtl8125b_bar0_regs.sv) | RTL8125B operational BAR0 footprint: MAC, interrupt, reset/config, and descriptor-base registers |
 
 ## Configuration space layout
 
@@ -45,6 +46,29 @@ Capability chain walks cleanly through Windows and Linux PCI enumeration.
 Use the full caps when the host needs to configure MSI vectors / MPS / power
 state; use the stubs for bring-up or testbench runs where only the chain
 topology matters. Swap via `pci_cfg_space #(.USE_CAP_STUBS(1))`.
+
+## BAR0 operational footprint
+
+`rtl8125b_bar0_regs` implements the initialization-critical MMIO subset. It
+models the RTL8125 32-bit interrupt mask/status pair at `0x38`/`0x3C`, the
+MAC and multicast-filter words, `ChipCmd` reset self-clear, writable RX/TX
+configuration, and the normal/high-priority TX plus RX descriptor bases.
+`TxConfig` keeps the read-only RTL8125B XID (`0x641`) across driver writes.
+Interrupt status is sticky/W1C and `irq_pending` is the masked-status OR.
+The block deliberately contains no descriptor fetcher or packet/DMA engine.
+
+| Offset | Width | Register behavior |
+|---:|---:|---|
+| `0x00`–`0x05` | 48 | MAC address, byte-addressable |
+| `0x08`–`0x0F` | 64 | Multicast address filter |
+| `0x20`/`0x24` | 64 | Normal-priority TX descriptor base |
+| `0x28`/`0x2C` | 64 | High-priority TX descriptor base |
+| `0x37` | 8 | `ChipCmd`; reset bit self-clears after a bounded delay |
+| `0x38` | 32 | RTL8125 interrupt mask |
+| `0x3C` | 32 | RTL8125 sticky/W1C interrupt status |
+| `0x40` | 32 | TX configuration with read-only RTL8125B XID fields |
+| `0x44` | 32 | RX configuration |
+| `0xE4`/`0xE8` | 64 | RX descriptor base |
 
 ## Command/response frame format
 
@@ -83,3 +107,4 @@ The opcode scramble LUT is obfuscation, not encryption. A static byte-level
 substitution is trivially broken by a handful of known-plaintext pairs. Layer a real
 AEAD (AES-GCM, ChaCha20-Poly1305) on top of the framed payload if the link may be
 observed or injected into.
+
