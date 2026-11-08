@@ -10,7 +10,11 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 
 | File | Purpose |
 |---|---|
-| [rtl/opcode_scramble_pkg.sv](rtl/opcode_scramble_pkg.sv) | 8-bit opcode substitution LUT (host↔wire, bijective) |
+| [rtl/opcode_scramble_pkg.sv](rtl/opcode_scramble_pkg.sv) | 8-bit opcode substitution LUT (host↔wire, bijective) — legacy, superseded by the crypto path when `secure_session_fsm` is wired in |
+| [rtl/crypto/chacha20_core.sv](rtl/crypto/chacha20_core.sv) | ChaCha20 block cipher, 20 rounds, 64-byte keystream block |
+| [rtl/crypto/trng_ring_osc.sv](rtl/crypto/trng_ring_osc.sv) | Ring-oscillator TRNG for ephemeral handshake nonces |
+| [rtl/crypto/secure_session_fsm.sv](rtl/crypto/secure_session_fsm.sv) | PSK-rooted mutual-auth handshake (CLIENT_HELLO → SERVER_CHALLENGE → CLIENT_RESPONSE → SERVER_ACK) with session-key derivation |
+| [rtl/crypto/secure_frame_enc.sv](rtl/crypto/secure_frame_enc.sv) | Data-plane ChaCha20 wrapper — encrypts outbound command/response frames per session |
 | [rtl/tlp_dw0_decoder.sv](rtl/tlp_dw0_decoder.sv) | Parse PCIe TLP header DW0 (Fmt / Type / TC / Length) |
 | [rtl/tlp_rid_tag_be_decoder.sv](rtl/tlp_rid_tag_be_decoder.sv) | Parse TLP DW1 (Requester ID / Tag / Byte Enables) |
 | [rtl/tlp_addr_decoder.sv](rtl/tlp_addr_decoder.sv) | Extract memory address from DW2/DW3 (3-DW & 4-DW headers) |
