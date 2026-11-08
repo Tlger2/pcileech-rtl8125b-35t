@@ -234,7 +234,7 @@ module tb_endpoint;
         $display("\n==== PHASE A: ft601_cmd_parser ====");
         begin
             logic [31:0] q[$];
-            q = {32'hDEAD_BEEF, 32'hCAFE_F00D, 32'h1234_5678, 32'hA5A5_5A5A};
+            q = '{32'hDEAD_BEEF, 32'hCAFE_F00D, 32'h1234_5678, 32'hA5A5_5A5A};
             send_frame(OPC_WRITE_BURST, 8'h00, 16'd4, 32'h0000_1000, q);
             @(posedge frame_done); @(posedge clk);
         end
