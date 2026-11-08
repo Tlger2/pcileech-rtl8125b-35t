@@ -167,6 +167,81 @@ module tb_endpoint;
         .s_axis_tx_tready(s_axis_tx_tready)
     );
 
+    // ============== Phase C: config space + cap chain ============
+    logic        cfg_rd_en, cfg_wr_en;
+    logic [5:0]  cfg_addr;
+    logic [3:0]  cfg_be;
+    logic [31:0] cfg_wdata, cfg_rdata;
+    logic        cmd_mem_space_en;
+    logic [63:0] bar0_base_64;
+    logic [31:0] bar2_base_32;
+
+    pci_cfg_space #(.USE_CAP_STUBS(1'b0)) u_cfg (
+        .clk                   (clk),
+        .rst_n                 (rst_n),
+        .cfg_rd_en             (cfg_rd_en),
+        .cfg_wr_en             (cfg_wr_en),
+        .cfg_addr              (cfg_addr),
+        .cfg_be                (cfg_be),
+        .cfg_wdata             (cfg_wdata),
+        .cfg_rdata             (cfg_rdata),
+        .cmd_mem_space_en      (cmd_mem_space_en),
+        .cmd_bus_master_en     (),
+        .cmd_intx_disable      (),
+        .bar0_base_64          (bar0_base_64),
+        .bar2_base_32          (bar2_base_32),
+        .interrupt_line        (),
+        .pm_power_state        (),
+        .msi_enable            (),
+        .msi_multi_msg_enable  (),
+        .msi_address           (),
+        .msi_data              (),
+        .cfg_max_payload_size  (),
+        .cfg_max_read_req_size (),
+        .link_speed_live       (4'd2),
+        .link_width_live       (6'd1)
+    );
+
+    task automatic cfg_write_dw(input logic [5:0] dw_idx,
+                                input logic [31:0] data,
+                                input logic [3:0] be);
+        @(posedge clk);
+        cfg_wr_en <= 1'b1;
+        cfg_addr  <= dw_idx;
+        cfg_wdata <= data;
+        cfg_be    <= be;
+        @(posedge clk);
+        cfg_wr_en <= 1'b0;
+        cfg_be    <= 4'h0;
+    endtask
+
+    task automatic cfg_read_dw(input logic [5:0] dw_idx,
+                               output logic [31:0] data);
+        @(posedge clk);
+        cfg_rd_en <= 1'b1;
+        cfg_addr  <= dw_idx;
+        @(posedge clk);
+        data = cfg_rdata;
+        cfg_rd_en <= 1'b0;
+    endtask
+
+    // ============== Phase D: BAR decoder + MSE ==================
+    logic [63:0] bar_tlp_addr;
+    logic        bar_hit;
+    logic [1:0]  bar_idx;
+    logic [15:0] bar_offset_lo;
+
+    pcie_bar_decoder u_bar_dec (
+        .mse           (cmd_mem_space_en),
+        .bar0_base_64  (bar0_base_64),
+        .bar2_base_32  (bar2_base_32),
+        .tlp_addr      (bar_tlp_addr),
+        .bar_hit       (bar_hit),
+        .bar_idx       (bar_idx),
+        .bar_offset_lo (bar_offset_lo),
+        .bar_offset_32 ()
+    );
+
     task automatic inject_mrd(
         input logic [15:0] req_id,
         input logic [7:0]  tag,
@@ -243,6 +318,12 @@ module tb_endpoint;
         hdr_dw1          = 32'h0;
         hdr_dw2          = 32'h0;
         beat_idx_mon     = 0;
+        cfg_rd_en        = 1'b0;
+        cfg_wr_en        = 1'b0;
+        cfg_addr         = 6'h0;
+        cfg_be           = 4'h0;
+        cfg_wdata        = 32'h0;
+        bar_tlp_addr     = 64'h0;
 
         rst_n = 1'b0;
         repeat (5) @(posedge clk);
@@ -333,6 +414,128 @@ module tb_endpoint;
             join
 
             `CHECK(beat_idx_mon == 4, "B.1 emitted 4 TX beats")
+        end
+
+        // =============================================================
+        // PHASE C — Config space capability chain walk
+        //
+        // Walks exactly the way an OS driver does:
+        //   1. Read DW 0x01 Status[4] -> Capabilities List bit must be 1.
+        //   2. Read DW 0x0D (byte 0x34) -> CAP_PTR byte 0 must be 0x40.
+        //   3. Read DW 16 (byte 0x40) -> PM cap: CAP_ID=0x01, Next=0x50.
+        //   4. Read DW 20 (byte 0x50) -> MSI cap: CAP_ID=0x05, Next=0x70.
+        //   5. Read DW 28 (byte 0x70) -> PCIe cap: CAP_ID=0x10, Next=0x00.
+        // =============================================================
+        $display("\n==== PHASE C: cap chain walk ====");
+        begin
+            logic [31:0] dw;
+            logic [7:0]  cap_ptr, cap_id, next_ptr;
+
+            // C.1 Check identity DW
+            cfg_read_dw(6'd0, dw);
+            `CHECK(dw == 32'h8125_10EC, "C.1 DW0 = DID_8125 | VID_10EC")
+
+            // C.2 Status bit [4] Capabilities List
+            cfg_read_dw(6'd1, dw);
+            `CHECK(dw[16+4] == 1'b1, "C.2 Status[4] Capabilities List = 1")
+
+            // C.3 Class Code / Rev ID
+            cfg_read_dw(6'd2, dw);
+            `CHECK(dw == 32'h0200_0036,
+                   "C.3 DW2 = Class 0x020000 | Rev 0x36")
+
+            // C.4 Subsys ID
+            cfg_read_dw(6'd11, dw);
+            `CHECK(dw == 32'h0123_10EC, "C.4 Subsys ID = 0x0123_10EC")
+
+            // C.5 CapPtr at byte 0x34
+            cfg_read_dw(6'd13, dw);
+            cap_ptr = dw[7:0];
+            `CHECK(cap_ptr == 8'h40, "C.5 CapPtr at 0x34 = 0x40")
+
+            // C.6 PM cap at 0x40 (DW 16)
+            cfg_read_dw(6'd16, dw);
+            cap_id   = dw[7:0];
+            next_ptr = dw[15:8];
+            `CHECK(cap_id   == 8'h01, "C.6 PM CapID = 0x01")
+            `CHECK(next_ptr == 8'h50, "C.6 PM NextPtr = 0x50")
+
+            // C.7 MSI cap at 0x50 (DW 20)
+            cfg_read_dw(6'd20, dw);
+            cap_id   = dw[7:0];
+            next_ptr = dw[15:8];
+            `CHECK(cap_id   == 8'h05, "C.7 MSI CapID = 0x05")
+            `CHECK(next_ptr == 8'h70, "C.7 MSI NextPtr = 0x70")
+            // MSI 64-bit capable bit
+            `CHECK(dw[16+7] == 1'b1, "C.7 MSI 64-bit capable = 1")
+
+            // C.8 PCIe cap at 0x70 (DW 28)
+            cfg_read_dw(6'd28, dw);
+            cap_id   = dw[7:0];
+            next_ptr = dw[15:8];
+            `CHECK(cap_id   == 8'h10, "C.8 PCIe CapID = 0x10")
+            `CHECK(next_ptr == 8'h00, "C.8 PCIe NextPtr = 0x00 (end)")
+            // PCIe Cap Reg: version=2, type=0 (endpoint)
+            `CHECK(dw[16+3:16+0] == 4'h2, "C.8 PCIe Cap version = 2")
+            `CHECK(dw[16+7:16+4] == 4'h0, "C.8 PCIe Device/Port Type = 0 (EP)")
+        end
+
+        // =============================================================
+        // PHASE D — MSE enforcement in the BAR decoder
+        //
+        //   1. After reset, MSE=0 and BARs=0. No in-range address hits.
+        //   2. Program BAR0 base (low=0xF000_0000) via config writes.
+        //   3. With MSE still 0, address in the BAR0 window -> no hit.
+        //   4. Set MSE=1 by writing Command register bit 1 -> hit.
+        //   5. Clear MSE back to 0 -> no hit again.
+        //   6. BAR2 programmed and in-range only hits when MSE=1.
+        // =============================================================
+        $display("\n==== PHASE D: MSE enforcement ====");
+        begin
+            // D.1 Post-reset: no MSE, no BAR hit
+            bar_tlp_addr = 64'hF000_0000;
+            #1;
+            `CHECK(bar_hit == 1'b0, "D.1 reset: MSE=0, BAR=0 -> no hit")
+
+            // D.2 Program BAR0 low to 0xF000_0000 (64-bit pair; keep high = 0)
+            cfg_write_dw(6'd4, 32'hF000_000C, 4'hF);  // BAR0 low (attribute bits preserved)
+            cfg_write_dw(6'd5, 32'h0000_0000, 4'hF);  // BAR1 upper = 0
+            bar_tlp_addr = 64'h0000_0000_F000_1234;
+            #1;
+            `CHECK(bar_hit == 1'b0, "D.2 BAR0 programmed, MSE=0 -> still no hit")
+
+            // D.3 Set MSE (Command bit 1) and parent Memory Space
+            cfg_write_dw(6'd1, 32'h0000_0002, 4'hF);  // Command = MSE only
+            @(posedge clk); @(posedge clk);
+            `CHECK(cmd_mem_space_en == 1'b1, "D.3 MSE latched high")
+            bar_tlp_addr = 64'h0000_0000_F000_1234;
+            #1;
+            `CHECK(bar_hit == 1'b1, "D.3 MSE=1 + BAR0 in range -> hit")
+            `CHECK(bar_idx == 2'd0, "D.3 hit on BAR0")
+            `CHECK(bar_offset_lo == 16'h1234, "D.3 offset = 0x1234")
+
+            // D.4 Out-of-range address -> no hit even with MSE=1
+            bar_tlp_addr = 64'h0000_0000_E000_0000;
+            #1;
+            `CHECK(bar_hit == 1'b0, "D.4 out-of-range -> no hit")
+
+            // D.5 Clear MSE -> no hit again
+            cfg_write_dw(6'd1, 32'h0000_0000, 4'hF);  // Command = 0
+            @(posedge clk); @(posedge clk);
+            `CHECK(cmd_mem_space_en == 1'b0, "D.5 MSE cleared")
+            bar_tlp_addr = 64'h0000_0000_F000_1234;
+            #1;
+            `CHECK(bar_hit == 1'b0, "D.5 MSE=0 again -> no hit")
+
+            // D.6 BAR2 path — program BAR2 then re-enable MSE
+            cfg_write_dw(6'd6, 32'hE000_0000, 4'hF);
+            cfg_write_dw(6'd1, 32'h0000_0002, 4'hF);
+            @(posedge clk); @(posedge clk);
+            bar_tlp_addr = 64'h0000_0000_E000_0ABC;
+            #1;
+            `CHECK(bar_hit == 1'b1, "D.6 BAR2 hit with MSE=1")
+            `CHECK(bar_idx == 2'd2, "D.6 hit index = BAR2")
+            `CHECK(bar_offset_lo == 16'h0ABC, "D.6 BAR2 offset = 0xABC")
         end
 
         $display("\n================================================");
