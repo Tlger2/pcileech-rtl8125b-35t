@@ -1,9 +1,12 @@
 // RTL8125B BAR0 register bank.
 //
-// 16 KiB BAR0 window with the init-time polled registers from the Linux
-// r8169 driver (RTL_GIGA_MAC_VER_61). Named registers return realistic
-// defaults; everything else lands in a shadow RAM so unexpected writes
-// are preserved and read back as a real NIC would.
+// 64 KiB BAR0 window (matching the real RTL8125B BAR0 aperture) with the
+// init-time polled registers from the Linux r8169 driver
+// (RTL_GIGA_MAC_VER_61). Named registers return realistic defaults;
+// everything else lands in a 16K-DW shadow RAM so unexpected writes are
+// preserved and read back as a real NIC would.
+//
+// Address bus is 16-bit (byte-addressed, 64 KiB), DW index is 14-bit.
 //
 // Link-up appears after a bounded auto-neg delay (default ~400 ms at
 // 62.5 MHz) so drivers don't see link-up on cycle 0.
@@ -17,7 +20,7 @@ module rtl8125b_bar0_regs #(
 
     input  logic        mem_wr_en,
     input  logic        mem_rd_en,
-    input  logic [13:0] mem_byte_addr,
+    input  logic [15:0] mem_byte_addr,
     input  logic [31:0] mem_wdata,
     input  logic [3:0]  mem_be,
     output logic [31:0] mem_rdata,
@@ -61,11 +64,11 @@ module rtl8125b_bar0_regs #(
     logic [7:0]  phystatus;
     assign phystatus = link_up_q ? 8'b1000_0011 : 8'b0000_0000;
 
-    logic [31:0] shadow_mem [0:1023];
+    logic [31:0] shadow_mem [0:16383];
 
-    logic [11:0] dw_idx;
+    logic [13:0] dw_idx;
     logic [7:0]  reg_off;
-    assign dw_idx  = mem_byte_addr[13:2];
+    assign dw_idx  = mem_byte_addr[15:2];
     assign reg_off = mem_byte_addr[7:0];
 
     // Readback mux
@@ -104,7 +107,7 @@ module rtl8125b_bar0_regs #(
             link_up_q      <= 1'b0;
             mem_rvalid     <= 1'b0;
             irq_pulse      <= 1'b0;
-            for (int i = 0; i < 1024; i++) shadow_mem[i] <= 32'h0;
+            for (int i = 0; i < 16384; i++) shadow_mem[i] <= 32'h0;
         end else begin
             mem_rvalid <= mem_rd_en;
             irq_pulse  <= 1'b0;
