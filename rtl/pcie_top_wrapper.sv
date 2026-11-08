@@ -70,6 +70,14 @@ module pcie_top_wrapper (
     logic        cfg_interrupt_msienable, cfg_interrupt_msixenable;
     logic [2:0]  cfg_interrupt_mmenable;
 
+    // Link Status register — bits[3:0] = current link speed, bits[9:4] = width
+    // Plumbed to pci_cap_pcie so the PCIe capability register always reflects
+    // the actual negotiated speed/width rather than a hardcoded constant.
+    // Per PCI Express Base Spec 3.0 §7.8.8:
+    //   Link Speed encoding: 0001=Gen1 (2.5 GT/s), 0010=Gen2 (5 GT/s)
+    //   Link Width encoding: 000001=x1, 000010=x2 …
+    logic [15:0] cfg_lstatus;
+
     pcie_7x_0 u_pcie_7x (
         .pci_exp_txp              (pci_exp_txp),
         .pci_exp_txn              (pci_exp_txn),
@@ -117,6 +125,7 @@ module pcie_top_wrapper (
         .cfg_function_number      (cfg_function_number),
         .cfg_max_payload_size     (cfg_max_payload_size),
         .cfg_max_read_req_size    (cfg_max_read_req_size),
+        .cfg_lstatus              (cfg_lstatus),
 
         .cfg_mgmt_di              (32'h0),
         .cfg_mgmt_byte_en         (4'h0),
@@ -143,7 +152,7 @@ module pcie_top_wrapper (
         .cfg_dev_id               (16'h8125),
         .cfg_rev_id               (8'h36),
         .cfg_subsys_vend_id       (16'h10EC),
-        .cfg_subsys_id            (16'h0123),
+        .cfg_subsys_id            (16'h8125),
 
         .cfg_pm_force_state_en    (1'b0),
         .cfg_pm_force_state       (2'b00),
@@ -197,6 +206,12 @@ module pcie_top_wrapper (
         .cfg_completer_id         (cfg_completer_id),
         .cfg_max_payload_size     (cfg_max_payload_size),
         .cfg_max_read_req_size    (cfg_max_read_req_size),
+
+        // Live link status → pci_cap_pcie (phase 4)
+        // Endpoint top must pass link_speed_live → pci_cap_pcie.link_speed_live
+        //                     link_width_live → pci_cap_pcie.link_width_live
+        .link_speed_live          (cfg_lstatus[3:0]),
+        .link_width_live          (cfg_lstatus[9:4]),
 
         .cfg_interrupt            (cfg_interrupt),
         .cfg_interrupt_rdy        (cfg_interrupt_rdy),
