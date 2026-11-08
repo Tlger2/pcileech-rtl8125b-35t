@@ -78,6 +78,18 @@ module pcie_top_wrapper (
     //   Link Width encoding: 000001=x1, 000010=x2 …
     logic [15:0] cfg_lstatus;
 
+    // --- cfg_ext: Extended config space (ECAP ≥0x100) forwarded by PCIe IP ---
+    // IP drives the _received/_number/_data/_be outputs; user logic drives back
+    // cfg_ext_read_data[31:0] and cfg_ext_read_data_valid within 2 user_clk cycles.
+    logic        cfg_ext_read_received;
+    logic        cfg_ext_write_received;
+    logic  [9:0] cfg_ext_register_number;
+    logic  [7:0] cfg_ext_function_number;
+    logic [31:0] cfg_ext_write_data;
+    logic  [3:0] cfg_ext_write_byte_enable;
+    logic [31:0] cfg_ext_read_data;
+    logic        cfg_ext_read_data_valid;
+
     pcie_7x_0 u_pcie_7x (
         .pci_exp_txp              (pci_exp_txp),
         .pci_exp_txn              (pci_exp_txn),
@@ -179,7 +191,19 @@ module pcie_top_wrapper (
         .cfg_err_acs              (1'b0),
         .cfg_err_aer_headerlog    (128'h0),
         .cfg_aer_interrupt_msgnum (5'h0),
-        .cfg_err_posted           (1'b0)
+        .cfg_err_posted           (1'b0),
+
+        // Extended config space (ECAP region ≥0x100) — PG054 §2.3
+        // IP drives read_received/write_received/register_number/function_number/
+        // write_data/write_byte_enable; user logic responds with read_data/valid.
+        .cfg_ext_read_received    (cfg_ext_read_received),
+        .cfg_ext_write_received   (cfg_ext_write_received),
+        .cfg_ext_register_number  (cfg_ext_register_number),
+        .cfg_ext_function_number  (cfg_ext_function_number),
+        .cfg_ext_write_data       (cfg_ext_write_data),
+        .cfg_ext_write_byte_enable(cfg_ext_write_byte_enable),
+        .cfg_ext_read_data        (cfg_ext_read_data),
+        .cfg_ext_read_data_valid  (cfg_ext_read_data_valid)
     );
 
     assign cfg_completer_id = {cfg_bus_number, cfg_device_number, cfg_function_number};
@@ -228,6 +252,16 @@ module pcie_top_wrapper (
         .ft601_wr_n               (ft601_wr_n),
         .ft601_txe_n              (ft601_txe_n),
         .ft601_data               (ft601_data),
-        .ft601_be                 (ft601_be)
+        .ft601_be                 (ft601_be),
+
+        // cfg_ext → ECAP mux (SECTION 11 in pcie_custom_endpoint_top)
+        .cfg_ext_read_received    (cfg_ext_read_received),
+        .cfg_ext_write_received   (cfg_ext_write_received),
+        .cfg_ext_register_number  (cfg_ext_register_number),
+        .cfg_ext_function_number  (cfg_ext_function_number),
+        .cfg_ext_write_data       (cfg_ext_write_data),
+        .cfg_ext_write_byte_enable(cfg_ext_write_byte_enable),
+        .cfg_ext_read_data        (cfg_ext_read_data),
+        .cfg_ext_read_data_valid  (cfg_ext_read_data_valid)
     );
 endmodule
