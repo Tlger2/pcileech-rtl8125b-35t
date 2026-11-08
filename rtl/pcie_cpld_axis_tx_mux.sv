@@ -60,6 +60,12 @@ module pcie_cpld_axis_tx_mux #(
     logic [7:0]        tkeep_this;
     logic              data_beat_ready;
     logic              beat_fire;
+    // The last 64-bit AXIS beat holds only one DW (lower lane, tkeep=0x0F)
+    // when the total DW count on the wire (3 header + N payload) is odd,
+    // i.e. when N is EVEN. len_odd tracks parity of N alone, which is the
+    // opposite — hence last_beat_partial = ~len_odd.
+    logic              last_beat_partial;
+    assign last_beat_partial = ~len_odd;
 
     assign beat_fire         = s_axis_tx_tvalid && s_axis_tx_tready;
     assign need_more_payload = (pf_addr < len_q);
@@ -82,7 +88,7 @@ module pcie_cpld_axis_tx_mux #(
             default: begin
                 lo_lane = pbuf[0];
                 hi_lane = pbuf[1];
-                if (last_beat && len_odd) begin
+                if (last_beat && last_beat_partial) begin
                     hi_lane    = 32'h0;
                     tkeep_this = 8'h0F;
                 end
@@ -94,7 +100,7 @@ module pcie_cpld_axis_tx_mux #(
         unique case (beat_idx)
             0:       data_beat_ready = 1'b1;
             1:       data_beat_ready = (pbuf_count >= 2'd1);
-            default: data_beat_ready = last_beat && len_odd
+            default: data_beat_ready = last_beat && last_beat_partial
                                         ? (pbuf_count >= 2'd1)
                                         : (pbuf_count >= 2'd2);
         endcase
@@ -150,7 +156,7 @@ module pcie_cpld_axis_tx_mux #(
                                 pbuf_count <= pbuf_count - 2'd1;
                             end
                             default: begin
-                                if (last_beat && len_odd) begin
+                                if (last_beat && last_beat_partial) begin
                                     pbuf_count <= pbuf_count - 2'd1;
                                     pbuf[0]    <= pbuf[1];
                                 end else begin
