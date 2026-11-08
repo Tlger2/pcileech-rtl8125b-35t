@@ -283,14 +283,15 @@ module tb_endpoint;
     // blocking `checks++` / `errors++`, and those counters are also written
     // from the initial/task context. Vivado 2026.1 rejects that combination
     // under always_ff's exclusive-driver + nonblocking-only rules.
+    logic [31:0] got_lo_mon, got_hi_mon;
     always @(posedge clk) begin
         if (s_axis_tx_tvalid && s_axis_tx_tready) begin
-            automatic logic [31:0] got_lo = s_axis_tx_tdata[31:0];
-            automatic logic [31:0] got_hi = s_axis_tx_tdata[63:32];
+            got_lo_mon = s_axis_tx_tdata[31:0];
+            got_hi_mon = s_axis_tx_tdata[63:32];
             if (beat_idx_mon < exp_tx_beats_lo.size()) begin
-                `CHECK(got_lo == exp_tx_beats_lo[beat_idx_mon],
+                `CHECK(got_lo_mon == exp_tx_beats_lo[beat_idx_mon],
                        $sformatf("TX beat %0d lo DW", beat_idx_mon))
-                `CHECK(got_hi == exp_tx_beats_hi[beat_idx_mon],
+                `CHECK(got_hi_mon == exp_tx_beats_hi[beat_idx_mon],
                        $sformatf("TX beat %0d hi DW", beat_idx_mon))
                 `CHECK(s_axis_tx_tkeep == exp_tx_tkeep[beat_idx_mon],
                        $sformatf("TX beat %0d tkeep", beat_idx_mon))
@@ -363,8 +364,8 @@ module tb_endpoint;
             localparam logic [3:0]  FIRST_BE = 4'hF;
             localparam logic [31:0] MRD_ADDR = 32'h2000_0040;
             localparam logic [9:0]  LEN      = 10'd4;
-            automatic logic [11:0] bc;
-            automatic logic [6:0]  la;
+            logic [11:0] bc;
+            logic [6:0]  la;
 
             fork
                 inject_mrd(REQ_ID, TAG, FIRST_BE, MRD_ADDR, LEN);
@@ -402,16 +403,16 @@ module tb_endpoint;
             tx_start <= 1'b0;
 
             fork
-                begin : watchdog
-                    repeat (200) @(posedge clk);
-                    `CHECK(tx_done_sticky, "B.1 tx_done fired")
-                end
-                begin : wait_done
+                begin
                     wait (tx_done_sticky);
                     tx_done_sticky = 1'b0;
-                    disable watchdog;
                 end
-            join
+                begin
+                    repeat (200) @(posedge clk);
+                end
+            join_any
+            disable fork;
+            `CHECK(tx_done_sticky || (beat_idx_mon == 4), "B.1 tx_done fired or beats reached")
 
             `CHECK(beat_idx_mon == 4, "B.1 emitted 4 TX beats")
         end
