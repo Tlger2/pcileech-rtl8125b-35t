@@ -42,6 +42,17 @@ module pcie_custom_endpoint_top (
     input  logic  [3:0] link_speed_live,
     input  logic  [5:0] link_width_live,
 
+    // cfg_ext: Extended config space (ECAP region ≥0x100) forwarded by PCIe IP (user_clk)
+    // Wire these to pcie_7x_0 cfg_ext_* ports in the top wrapper.
+    input  logic        cfg_ext_read_received,
+    input  logic        cfg_ext_write_received,
+    input  logic  [9:0] cfg_ext_register_number,
+    input  logic  [7:0] cfg_ext_function_number,
+    input  logic [31:0] cfg_ext_write_data,
+    input  logic  [3:0] cfg_ext_write_byte_enable,
+    output logic [31:0] cfg_ext_read_data,
+    output logic        cfg_ext_read_data_valid,
+
     // Interrupt (user_clk)
     output logic        cfg_interrupt,
     input  logic        cfg_interrupt_rdy,
@@ -576,5 +587,84 @@ ft601_resp_packager u_resp_packager (
 
 // fifo_wr_be: all bytes valid for response frames
 assign fifo_wr_be = 4'hF;
+
+// =============================================================================
+// SECTION 11 — cfg_ext → ECAP mux
+// The 7-series PCIe IP forwards extended config space accesses (register_number
+// >= 0x040 = byte offset 0x100) through cfg_ext_* ports.  We decode the DW
+// address and dispatch to the appropriate ECAP module, then register the
+// response one cycle later (IP requires data within 2 clocks of read_received).
+//
+// DW address map:
+//   AER  0x040..0x04A  (11 DWs, bytes 0x100..0x128)
+//   DSN  0x054..0x056  ( 3 DWs, bytes 0x150..0x158)
+//   LTR  0x058..0x059  ( 2 DWs, bytes 0x160..0x164)
+// =============================================================================
+
+// ---- Address decode ---------------------------------------------------------
+logic        ecap_aer_sel, ecap_dsn_sel, ecap_ltr_sel;
+assign ecap_aer_sel = (cfg_ext_register_number >= 10'h040) &&
+                      (cfg_ext_register_number <= 10'h04A);
+assign ecap_dsn_sel = (cfg_ext_register_number >= 10'h054) &&
+                      (cfg_ext_register_number <= 10'h056);
+assign ecap_ltr_sel = (cfg_ext_register_number >= 10'h058) &&
+                      (cfg_ext_register_number <= 10'h059);
+
+logic [3:0] aer_dw_idx, dsn_dw_idx, ltr_dw_idx;
+assign aer_dw_idx = cfg_ext_register_number[3:0] - 4'h0;  // relative to 0x040
+assign dsn_dw_idx = cfg_ext_register_number[1:0] - 2'h0;  // relative to 0x054
+assign ltr_dw_idx = cfg_ext_register_number[0];            // relative to 0x058
+
+// ---- ECAP module instances --------------------------------------------------
+logic [31:0] aer_rd_data_w, dsn_rd_data_w, ltr_rd_data_w;
+
+pcie_ecap_aer u_ecap_aer (
+    .clk       (user_clk),
+    .rst_n     (user_rst_n),
+    .cap_rd_en (cfg_ext_read_received  && ecap_aer_sel),
+    .cap_wr_en (cfg_ext_write_received && ecap_aer_sel),
+    .cap_dw_idx(aer_dw_idx),
+    .cap_be    (cfg_ext_write_byte_enable),
+    .cap_wdata (cfg_ext_write_data),
+    .cap_rdata (aer_rd_data_w)
+);
+
+pcie_ecap_dsn u_ecap_dsn (
+    .clk       (user_clk),
+    .rst_n     (user_rst_n),
+    .cap_rd_en (cfg_ext_read_received  && ecap_dsn_sel),
+    .cap_wr_en (cfg_ext_write_received && ecap_dsn_sel),
+    .cap_dw_idx(dsn_dw_idx[1:0]),
+    .cap_be    (cfg_ext_write_byte_enable),
+    .cap_wdata (cfg_ext_write_data),
+    .cap_rdata (dsn_rd_data_w)
+);
+
+pcie_ecap_ltr u_ecap_ltr (
+    .clk       (user_clk),
+    .rst_n     (user_rst_n),
+    .cap_rd_en (cfg_ext_read_received  && ecap_ltr_sel),
+    .cap_wr_en (cfg_ext_write_received && ecap_ltr_sel),
+    .cap_dw_idx(ltr_dw_idx[0]),
+    .cap_be    (cfg_ext_write_byte_enable),
+    .cap_wdata (cfg_ext_write_data),
+    .cap_rdata (ltr_rd_data_w)
+);
+
+// ---- One-cycle registered response (IP requires valid within 2 clocks) ------
+always_ff @(posedge user_clk or negedge user_rst_n) begin
+    if (!user_rst_n) begin
+        cfg_ext_read_data       <= 32'hFFFF_FFFF;
+        cfg_ext_read_data_valid <= 1'b0;
+    end else begin
+        cfg_ext_read_data_valid <= cfg_ext_read_received;
+        if (cfg_ext_read_received) begin
+            if      (ecap_aer_sel) cfg_ext_read_data <= aer_rd_data_w;
+            else if (ecap_dsn_sel) cfg_ext_read_data <= dsn_rd_data_w;
+            else if (ecap_ltr_sel) cfg_ext_read_data <= ltr_rd_data_w;
+            else                   cfg_ext_read_data <= 32'hFFFF_FFFF; // unsupported ECAP → all-F
+        end
+    end
+end
 
 endmodule
