@@ -186,10 +186,14 @@ module tb_endpoint;
     logic        exp_tx_tlast    [$];
     int          beat_idx_mon;
 
-    always_ff @(posedge clk) begin
+    // NOTE: plain `always` (not always_ff) — the CHECK macro expands to
+    // blocking `checks++` / `errors++`, and those counters are also written
+    // from the initial/task context. Vivado 2026.1 rejects that combination
+    // under always_ff's exclusive-driver + nonblocking-only rules.
+    always @(posedge clk) begin
         if (s_axis_tx_tvalid && s_axis_tx_tready) begin
-            logic [31:0] got_lo = s_axis_tx_tdata[31:0];
-            logic [31:0] got_hi = s_axis_tx_tdata[63:32];
+            automatic logic [31:0] got_lo = s_axis_tx_tdata[31:0];
+            automatic logic [31:0] got_hi = s_axis_tx_tdata[63:32];
             if (beat_idx_mon < exp_tx_beats_lo.size()) begin
                 `CHECK(got_lo == exp_tx_beats_lo[beat_idx_mon],
                        $sformatf("TX beat %0d lo DW", beat_idx_mon))
