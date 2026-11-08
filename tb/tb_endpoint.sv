@@ -14,6 +14,18 @@ module tb_endpoint;
     int errors = 0;
     int checks = 0;
 
+    // Sticky latches so a one-cycle combinational pulse on frame_done /
+    // tx_done is never missed by an @(posedge …) that happens to arm after
+    // the pulse has already resolved in the same timestep. Plain `always`
+    // (not always_ff) because the initial block also clears these — the
+    // multi-driver rule only bites inside always_ff.
+    logic frame_done_sticky = 1'b0;
+    logic tx_done_sticky    = 1'b0;
+    always @(posedge clk) begin
+        if (frame_done) frame_done_sticky = 1'b1;
+        if (tx_done)    tx_done_sticky    = 1'b1;
+    end
+
     `define CHECK(cond, msg)                                               \
         begin                                                              \
             checks++;                                                      \
@@ -236,7 +248,8 @@ module tb_endpoint;
             logic [31:0] q[$];
             q = '{32'hDEAD_BEEF, 32'hCAFE_F00D, 32'h1234_5678, 32'hA5A5_5A5A};
             send_frame(OPC_WRITE_BURST, 8'h00, 16'd4, 32'h0000_1000, q);
-            @(posedge frame_done); @(posedge clk);
+            wait (frame_done_sticky); frame_done_sticky = 1'b0;
+            @(posedge clk);
         end
         `CHECK(rf_mem.exists(32'h0000_1000) && rf_mem[32'h0000_1000] == 32'hDEAD_BEEF, "A.1 regfile[0x1000]")
         `CHECK(rf_mem.exists(32'h0000_1004) && rf_mem[32'h0000_1004] == 32'hCAFE_F00D, "A.1 regfile[0x1004]")
@@ -248,7 +261,8 @@ module tb_endpoint;
         begin
             logic [31:0] q[$];
             send_frame(OPC_READ, 8'h00, 16'd0, 32'h0000_1004, q);
-            @(posedge frame_done); @(posedge clk);
+            wait (frame_done_sticky); frame_done_sticky = 1'b0;
+            @(posedge clk);
         end
         `CHECK(last_opcode == OPC_READ, "A.2 last_opcode == OPC_READ")
 
@@ -303,10 +317,11 @@ module tb_endpoint;
             fork
                 begin : watchdog
                     repeat (200) @(posedge clk);
-                    `CHECK(tx_done, "B.1 tx_done fired")
+                    `CHECK(tx_done_sticky, "B.1 tx_done fired")
                 end
                 begin : wait_done
-                    @(posedge tx_done);
+                    wait (tx_done_sticky);
+                    tx_done_sticky = 1'b0;
                     disable watchdog;
                 end
             join
