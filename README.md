@@ -10,6 +10,10 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 
 | File | Purpose |
 |---|---|
+| [rtl/ecap/pcie_ecap_router.sv](rtl/ecap/pcie_ecap_router.sv) | ECAP chain router — decodes 10-bit DW addresses ≥ 0x040 and dispatches to AER / DSN / LTR caps |
+| [rtl/ecap/pcie_ecap_aer.sv](rtl/ecap/pcie_ecap_aer.sv) | AER Extended Capability (ECAP ID 0x0001, ver 2) — 11 DWs at 0x100, RTL8125B severity defaults |
+| [rtl/ecap/pcie_ecap_dsn.sv](rtl/ecap/pcie_ecap_dsn.sv) | Device Serial Number (ECAP ID 0x0003, ver 1) — 3 DWs at 0x150, serial derived from MAC_ADDR |
+| [rtl/ecap/pcie_ecap_ltr.sv](rtl/ecap/pcie_ecap_ltr.sv) | Latency Tolerance Reporting (ECAP ID 0x0018, ver 1) — 2 DWs at 0x160, 3.2 µs default, end of chain |
 | [rtl/opcode_scramble_pkg.sv](rtl/opcode_scramble_pkg.sv) | 8-bit opcode substitution LUT (host↔wire, bijective) — legacy, superseded by the crypto path when `secure_session_fsm` is wired in |
 | [rtl/crypto/chacha20_core.sv](rtl/crypto/chacha20_core.sv) | ChaCha20 block cipher, 20 rounds, 64-byte keystream block |
 | [rtl/crypto/trng_ring_osc.sv](rtl/crypto/trng_ring_osc.sv) | Ring-oscillator TRNG for ephemeral handshake nonces |
