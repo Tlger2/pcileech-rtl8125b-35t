@@ -22,6 +22,29 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 | [rtl/pcie_top_wrapper.sv](rtl/pcie_top_wrapper.sv) | Top-level that instantiates `pcie_7x_0` and the custom endpoint, with GT REFCLK + PERST# routing |
 | [tb/tb_endpoint.sv](tb/tb_endpoint.sv) | Self-checking XSim testbench — parser frames + CplD TX mux beat stream |
 | [host/ft601_client.py](host/ft601_client.py) | Python host-side driver (pyftdi) for the FT601 framed protocol |
+| [rtl/pci_type0_cfg_header.sv](rtl/pci_type0_cfg_header.sv) | PCI Type 0 configuration space header (RTL8125B identity, BARs, Command/Status) |
+| [rtl/pci_cfg_space.sv](rtl/pci_cfg_space.sv) | Config-space router: header + PM/MSI/PCIe cap chain, with stub/full selector |
+| [rtl/caps/pci_cap_pm.sv](rtl/caps/pci_cap_pm.sv) | PCI Power Management Capability (full, host-writable PMCSR) |
+| [rtl/caps/pci_cap_msi.sv](rtl/caps/pci_cap_msi.sv) | MSI Capability (full, 64-bit addr, 8 vectors) |
+| [rtl/caps/pci_cap_pcie.sv](rtl/caps/pci_cap_pcie.sv) | PCIe Capability v2 (full, Endpoint, MPS/MRRS host-writable) |
+| [rtl/caps/pci_cap_pm_stub.sv](rtl/caps/pci_cap_pm_stub.sv) | PM Cap enumeration stub (read-only) |
+| [rtl/caps/pci_cap_msi_stub.sv](rtl/caps/pci_cap_msi_stub.sv) | MSI Cap enumeration stub (read-only) |
+| [rtl/caps/pci_cap_pcie_stub.sv](rtl/caps/pci_cap_pcie_stub.sv) | PCIe Cap enumeration stub (read-only) |
+| [rtl/pcie_bar_decoder.sv](rtl/pcie_bar_decoder.sv) | BAR aperture match + Memory Space Enable (MSE) enforcement |
+
+## Configuration space layout
+
+```
+0x00 .. 0x3F : Type 0 header   (VID/DID, Command, Status, BARs, Cap Ptr=0x40)
+0x40 .. 0x47 : PM Cap          (Cap ID 0x01, Next 0x50)
+0x50 .. 0x5F : MSI Cap         (Cap ID 0x05, Next 0x70, 64-bit addr)
+0x70 .. 0xAB : PCIe Cap v2     (Cap ID 0x10, Next 0x00, Endpoint)
+```
+
+Capability chain walks cleanly through Windows and Linux PCI enumeration.
+Use the full caps when the host needs to configure MSI vectors / MPS / power
+state; use the stubs for bring-up or testbench runs where only the chain
+topology matters. Swap via `pci_cfg_space #(.USE_CAP_STUBS(1))`.
 
 ## Command/response frame format
 
