@@ -72,16 +72,14 @@ if {[file isdirectory $xdc_dir]} {
 set ip_exists [get_ips -quiet pcie_7x_0]
 if {[llength $ip_exists] == 0} {
     # Find pcie_7x_0 — try glob first (works across versions), then filter
-    set avail [get_ipdefs "xilinx.com:ip:pcie_7x_0:*" -quiet]
+    # IP name is "pcie_7x"; module_name "pcie_7x_0" is the instance name RTL references
+    set avail [get_ipdefs "xilinx.com:ip:pcie_7x:*" -quiet]
     if {[llength $avail] == 0} {
-        # Dump all PCIe IPs so we can see what's actually in the catalog
-        set pcie_ips [get_ipdefs -filter {VLNV =~ "*pcie*"} -quiet]
-        puts "INFO: PCIe IPs in catalog: $pcie_ips"
-        error "pcie_7x_0 not found — see PCIe IP list above"
+        error "pcie_7x IP not found in catalog — check Vivado installation"
     }
     set ip_ver [lindex [split [lindex $avail 0] {:}] end]
-    puts "INFO: using pcie_7x_0 version $ip_ver"
-    create_ip -name pcie_7x_0 -vendor xilinx.com -library ip \
+    puts "INFO: using pcie_7x version $ip_ver"
+    create_ip -name pcie_7x -vendor xilinx.com -library ip \
               -version $ip_ver -module_name pcie_7x_0
 
     set_property -dict [list \
