@@ -13,7 +13,8 @@
 
 module rtl8125b_bar0_regs #(
     parameter int LINK_UP_DELAY_CYCLES = 32'd25_000_000,
-    parameter logic [47:0] MAC_ADDR    = 48'h00_E0_4C_12_34_56
+    parameter logic [47:0] MAC_ADDR    = 48'h00_E0_4C_12_34_56,
+    parameter bit ENABLE_SHADOW = 1'b1
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -64,12 +65,33 @@ module rtl8125b_bar0_regs #(
     logic [7:0]  phystatus;
     assign phystatus = link_up_q ? 8'b1000_0011 : 8'b0000_0000;
 
-    logic [31:0] shadow_mem [0:16383];
+    logic [31:0] shadow_read;
 
     logic [13:0] dw_idx;
     logic [7:0]  reg_off;
     assign dw_idx  = mem_byte_addr[15:2];
     assign reg_off = mem_byte_addr[7:0];
+
+    // The current endpoint does not deliver Memory Write payloads. It can
+    // omit this storage while keeping unmapped offsets at their reset value.
+    if (ENABLE_SHADOW) begin : gen_shadow
+        logic [31:0] shadow_mem [0:16383];
+        wire named_write = reg_off == REG_MAC0 || reg_off == REG_MAC4 ||
+            reg_off == REG_TXCONFIG || reg_off == REG_RXCONFIG ||
+            reg_off == REG_INTRMASK || reg_off == REG_INTRSTATUS ||
+            reg_off == REG_CMD || reg_off == REG_CFG9346 || reg_off == REG_CONFIG3;
+        assign shadow_read = shadow_mem[dw_idx];
+        always_ff @(posedge clk or negedge rst_n) begin
+            if (!rst_n) begin
+                for (int i = 0; i < 16384; i++) shadow_mem[i] <= '0;
+            end else if (mem_wr_en && !named_write) begin
+                for (int b = 0; b < 4; b++)
+                    if (mem_be[b]) shadow_mem[dw_idx][8*b +: 8] <= mem_wdata[8*b +: 8];
+            end
+        end
+    end else begin : gen_no_shadow
+        assign shadow_read = '0;
+    end
 
     // Readback mux
     always_comb begin
@@ -85,7 +107,7 @@ module rtl8125b_bar0_regs #(
             REG_CFG9346:     mem_rdata = {config2_q, 8'h00, 8'h00, cfg9346_q};
             REG_CONFIG3:     mem_rdata = {config5_q, config4_q, config3_q, 8'h00};
             REG_PHYSTATUS:   mem_rdata = {24'h0, phystatus};
-            default:         mem_rdata = shadow_mem[dw_idx];
+            default:         mem_rdata = shadow_read;
         endcase
     end
 
@@ -107,7 +129,6 @@ module rtl8125b_bar0_regs #(
             link_up_q      <= 1'b0;
             mem_rvalid     <= 1'b0;
             irq_pulse      <= 1'b0;
-            for (int i = 0; i < 16384; i++) shadow_mem[i] <= 32'h0;
         end else begin
             mem_rvalid <= mem_rd_en;
             irq_pulse  <= 1'b0;
@@ -174,12 +195,7 @@ module rtl8125b_bar0_regs #(
                             if (mem_be[3]) config5_q <= mem_wdata[31:24];
                         end
                     end
-                    default: begin
-                        if (mem_be[0]) shadow_mem[dw_idx][7:0]   <= mem_wdata[7:0];
-                        if (mem_be[1]) shadow_mem[dw_idx][15:8]  <= mem_wdata[15:8];
-                        if (mem_be[2]) shadow_mem[dw_idx][23:16] <= mem_wdata[23:16];
-                        if (mem_be[3]) shadow_mem[dw_idx][31:24] <= mem_wdata[31:24];
-                    end
+                    default: ;
                 endcase
             end
         end

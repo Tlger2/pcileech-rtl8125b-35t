@@ -20,6 +20,8 @@ module ft601_cmd_parser
     input  logic        fifo_rd_valid,
     output logic        fifo_rd_ready,
     input  logic [31:0] fifo_rd_data,
+    input  logic        accept_frame,
+    input  logic        rf_ready,
 
     output logic        rf_we,
     output logic [31:0] rf_waddr,
@@ -31,6 +33,8 @@ module ft601_cmd_parser
     input  logic        rf_rvalid,
 
     output logic        frame_start,
+    output logic        read_start,
+    output logic [15:0] read_length,
     output logic        frame_done,
     output logic        bad_opcode_err,
     output logic [7:0]  last_opcode,
@@ -44,7 +48,8 @@ module ft601_cmd_parser
         S_HDR   = 3'd1,
         S_ADDR  = 3'd2,
         S_WDATA = 3'd3,
-        S_RWAIT = 3'd4
+        S_RWAIT = 3'd4,
+        S_RISSUE = 3'd5
     } st_t;
 
     st_t state, state_n;
@@ -82,12 +87,14 @@ module ft601_cmd_parser
         rf_re           = 1'b0;
         rf_raddr        = cur_addr_q;
         frame_start     = 1'b0;
+        read_start      = 1'b0;
+        read_length     = is_burst ? length_q : 16'd1;
         frame_done      = 1'b0;
         state_n         = state;
 
         unique case (state)
             S_SYNC: begin
-                fifo_rd_ready = 1'b1;
+                fifo_rd_ready = accept_frame;
                 if (word_fire && fifo_rd_data == FRAME_MAGIC) begin
                     frame_start = 1'b1;
                     state_n     = S_HDR;
@@ -108,7 +115,12 @@ module ft601_cmd_parser
                         if (length_q == 16'd0) state_n = S_SYNC;
                         else                   state_n = S_WDATA;
                     end else if (is_read_cmd) begin
-                        state_n = S_RWAIT;
+                        if (is_burst && length_q == 16'd0) begin
+                            state_n = S_SYNC;
+                        end else begin
+                            read_start = fifo_rd_data != FRAME_MAGIC;
+                            state_n = S_RISSUE;
+                        end
                     end else begin
                         state_n = S_SYNC;
                     end
@@ -116,7 +128,7 @@ module ft601_cmd_parser
             end
 
             S_WDATA: begin
-                fifo_rd_ready = 1'b1;
+                fifo_rd_ready = rf_ready;
                 if (word_fire) begin
                     rf_we    = 1'b1;
                     rf_waddr = cur_addr_q;
@@ -128,14 +140,17 @@ module ft601_cmd_parser
                 end
             end
 
+            S_RISSUE: begin
+                rf_re = rf_ready;
+                if (rf_ready) state_n = S_RWAIT;
+            end
+
             S_RWAIT: begin
-                rf_re    = 1'b1;
-                rf_raddr = cur_addr_q;
                 if (rf_rvalid) begin
                     if (!is_burst || length_q == 16'd1) begin
                         frame_done = 1'b1;
                         state_n    = S_SYNC;
-                    end
+                    end else state_n = S_RISSUE;
                 end
             end
         endcase

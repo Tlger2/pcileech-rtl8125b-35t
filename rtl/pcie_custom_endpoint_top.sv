@@ -33,7 +33,7 @@ module pcie_custom_endpoint_top (
     input  logic        m_axis_rx_tvalid,
     output logic        m_axis_rx_tready,
     input  logic        m_axis_rx_tlast,
-    input  logic  [3:0] m_axis_rx_tuser,
+    input  logic  [21:0] m_axis_rx_tuser,
 
     // PCIe config (user_clk)
     input  logic [15:0] cfg_completer_id,
@@ -41,17 +41,6 @@ module pcie_custom_endpoint_top (
     input  logic  [2:0] cfg_max_read_req_size,
     input  logic  [3:0] link_speed_live,
     input  logic  [5:0] link_width_live,
-
-    // cfg_ext: Extended config space (ECAP region ≥0x100) forwarded by PCIe IP (user_clk)
-    // Wire these to pcie_7x_0 cfg_ext_* ports in the top wrapper.
-    input  logic        cfg_ext_read_received,
-    input  logic        cfg_ext_write_received,
-    input  logic  [9:0] cfg_ext_register_number,
-    input  logic  [7:0] cfg_ext_function_number,
-    input  logic [31:0] cfg_ext_write_data,
-    input  logic  [3:0] cfg_ext_write_byte_enable,
-    output logic [31:0] cfg_ext_read_data,
-    output logic        cfg_ext_read_data_valid,
 
     // Interrupt (user_clk)
     output logic        cfg_interrupt,
@@ -123,6 +112,9 @@ logic [31:0] rf_waddr_ft, rf_wdata_ft, rf_raddr_ft;
 logic [31:0] rf_rdata_ft;
 logic        rf_rvalid_ft;
 logic        frame_start_ft, frame_done_ft, bad_opcode_err_ft;
+logic        read_start_ft, rsp_busy_ft;
+logic [15:0] read_length_ft;
+logic        cmd_ready_ft;
 logic  [7:0] last_opcode_ft;
 logic [31:0] last_base_addr_ft;
 
@@ -132,6 +124,8 @@ ft601_cmd_parser u_cmd_parser (
     .fifo_rd_valid (fifo_rd_valid),
     .fifo_rd_ready (fifo_rd_ready),
     .fifo_rd_data  (fifo_rd_data),
+    .accept_frame  (!rsp_busy_ft),
+    .rf_ready      (cmd_ready_ft),
     .rf_we         (rf_we_ft),
     .rf_waddr      (rf_waddr_ft),
     .rf_wdata      (rf_wdata_ft),
@@ -140,6 +134,8 @@ ft601_cmd_parser u_cmd_parser (
     .rf_rdata      (rf_rdata_ft),
     .rf_rvalid     (rf_rvalid_ft),
     .frame_start   (frame_start_ft),
+    .read_start    (read_start_ft),
+    .read_length   (read_length_ft),
     .frame_done    (frame_done_ft),
     .bad_opcode_err(bad_opcode_err_ft),
     .last_opcode   (last_opcode_ft),
@@ -155,22 +151,28 @@ ft601_cmd_parser u_cmd_parser (
 logic        cmd_fifo_wr_en;
 logic [64:0] cmd_fifo_din;
 logic        cmd_fifo_full;
+logic        cmd_wr_busy, cmd_rd_busy;
+logic        rsp_wr_busy, rsp_rd_busy;
+logic        rsp_fifo_full;
 
 logic        cmd_fifo_rd_en;
 logic [64:0] cmd_fifo_dout;
 logic        cmd_fifo_empty;
 
-assign cmd_fifo_wr_en = (rf_we_ft || rf_re_ft) && !cmd_fifo_full;
+assign cmd_ready_ft = !cmd_fifo_full && !cmd_wr_busy;
+assign cmd_fifo_wr_en = (rf_we_ft || rf_re_ft) && cmd_ready_ft;
 assign cmd_fifo_din   = rf_we_ft
                       ? {1'b1, rf_waddr_ft, rf_wdata_ft}
                       : {1'b0, rf_raddr_ft, 32'h0};
 
 xpm_fifo_async #(
-    .FIFO_DEPTH      (16),
-    .DATA_WIDTH      (65),
+    .FIFO_WRITE_DEPTH(16),
+    .WRITE_DATA_WIDTH(65),
     .FIFO_MEMORY_TYPE("distributed"),
     .CDC_SYNC_STAGES (2),
-    .READ_MODE       ("fwft")
+    .READ_MODE       ("fwft"),
+    .FIFO_READ_LATENCY(0),
+    .USE_ADV_FEATURES("0000")
 ) u_cmd_cdc (
     .wr_clk   (ft601_clk),
     .rd_clk   (user_clk),
@@ -182,7 +184,7 @@ xpm_fifo_async #(
     .dout     (cmd_fifo_dout),
     .empty    (cmd_fifo_empty),
     // unused
-    .wr_rst_busy(), .rd_rst_busy(),
+    .wr_rst_busy(cmd_wr_busy), .rd_rst_busy(cmd_rd_busy),
     .almost_full(), .almost_empty(),
     .wr_data_count(), .rd_data_count(),
     .overflow(), .underflow(),
@@ -195,9 +197,10 @@ xpm_fifo_async #(
 logic        rf_we_uc, rf_re_uc;
 logic [31:0] rf_waddr_uc, rf_wdata_uc, rf_raddr_uc;
 
-assign cmd_fifo_rd_en = !cmd_fifo_empty;
-assign rf_we_uc   =  cmd_fifo_dout[64] && !cmd_fifo_empty;
-assign rf_re_uc   = !cmd_fifo_dout[64] && !cmd_fifo_empty;
+assign cmd_fifo_rd_en = !cmd_fifo_empty && !cmd_rd_busy && !user_reset &&
+    (cmd_fifo_dout[64] || (!rsp_wr_busy && !rsp_fifo_full));
+assign rf_we_uc   =  cmd_fifo_dout[64] && cmd_fifo_rd_en;
+assign rf_re_uc   = !cmd_fifo_dout[64] && cmd_fifo_rd_en;
 assign rf_waddr_uc = cmd_fifo_dout[63:32];
 assign rf_wdata_uc = cmd_fifo_dout[31:0];
 assign rf_raddr_uc = cmd_fifo_dout[63:32];
@@ -207,18 +210,19 @@ assign rf_raddr_uc = cmd_fifo_dout[63:32];
 // =============================================================================
 logic        rsp_fifo_wr_en;
 logic [31:0] rsp_fifo_din;
-logic        rsp_fifo_full;
 
 logic        rsp_fifo_rd_en;
 logic [31:0] rsp_fifo_dout;
 logic        rsp_fifo_empty;
 
 xpm_fifo_async #(
-    .FIFO_DEPTH      (16),
-    .DATA_WIDTH      (32),
+    .FIFO_WRITE_DEPTH(16),
+    .WRITE_DATA_WIDTH(32),
     .FIFO_MEMORY_TYPE("distributed"),
     .CDC_SYNC_STAGES (2),
-    .READ_MODE       ("fwft")
+    .READ_MODE       ("fwft"),
+    .FIFO_READ_LATENCY(0),
+    .USE_ADV_FEATURES("0000")
 ) u_rsp_cdc (
     .wr_clk   (user_clk),
     .rd_clk   (ft601_clk),
@@ -229,7 +233,7 @@ xpm_fifo_async #(
     .rd_en    (rsp_fifo_rd_en),
     .dout     (rsp_fifo_dout),
     .empty    (rsp_fifo_empty),
-    .wr_rst_busy(), .rd_rst_busy(),
+    .wr_rst_busy(rsp_wr_busy), .rd_rst_busy(rsp_rd_busy),
     .almost_full(), .almost_empty(),
     .wr_data_count(), .rd_data_count(),
     .overflow(), .underflow(),
@@ -239,9 +243,8 @@ xpm_fifo_async #(
 );
 
 // Drive rf_rdata_ft from response FIFO (ft601_clk domain)
-assign rsp_fifo_rd_en = !rsp_fifo_empty;
 assign rf_rdata_ft    = rsp_fifo_empty ? 32'hDEAD_BEEF : rsp_fifo_dout;
-assign rf_rvalid_ft   = !rsp_fifo_empty;
+assign rf_rvalid_ft   = rsp_fifo_rd_en;
 
 // =============================================================================
 // SECTION 5 — DMA engine (user_clk domain)
@@ -250,7 +253,7 @@ logic [31:0] rf_rdata_uc;
 logic        rf_rvalid_uc;
 
 // Push DMA read-back into response FIFO
-assign rsp_fifo_wr_en = rf_rvalid_uc && !rsp_fifo_full;
+assign rsp_fifo_wr_en = rf_rvalid_uc && !rsp_fifo_full && !rsp_wr_busy;
 assign rsp_fifo_din   = rf_rdata_uc;
 
 // TX from DMA engine
@@ -261,6 +264,11 @@ logic        dma_tx_ready;
 
 // Jitter signals
 logic        dma_cpl_seen, dma_hold_req;
+
+logic rx_cpl_valid_w, rx_cpl_ready_w;
+logic [63:0] rx_cpl_data_w;
+logic  [7:0] rx_cpl_keep_w;
+logic        rx_cpl_last_w;
 
 dma_engine u_dma (
     .user_clk        (user_clk),
@@ -368,10 +376,7 @@ end
 // Simple heuristic: CplD with fmt=10/type=01010 arrives at AXI-Stream RX.
 // We tee the stream: dma_engine gets it via rx_cpl_* wires; BAR0 ignores it.
 
-logic rx_cpl_valid_w, rx_cpl_ready_w;
-logic [63:0] rx_cpl_data_w;
-logic  [7:0] rx_cpl_keep_w;
-logic        rx_cpl_last_w;
+
 
 // Route the raw AXI-Stream RX to dma_engine when it looks like a CplD.
 // The dma_engine uses its pend_tag to validate; we just forward all CplDs.
@@ -398,7 +403,7 @@ logic        irq_pulse;
 
 // BAR0 access is from host MemRd/MemWr — decode address from rx_dw3
 assign bar0_byte_addr = rx_bar0_addr[15:0];
-assign bar0_wdata     = 32'h0;    // MemWr payload not consumed (EAC probes are reads)
+assign bar0_wdata     = 32'h0;    // Memory Write payload is not wired to the register bank
 assign bar0_be        = 4'hF;
 
 // Trigger BAR0 read when header is fully captured and it's a MemRd
@@ -416,7 +421,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
     else if (bar0_rvalid)         bar0_rd_pending_q <= 1'b0;
 end
 
-rtl8125b_bar0_regs u_bar0 (
+rtl8125b_bar0_regs #(.ENABLE_SHADOW(1'b0)) u_bar0 (
     .clk               (user_clk),
     .rst_n             (user_rst_n),
     .mem_wr_en         (bar0_mem_wr_en),
@@ -431,87 +436,34 @@ rtl8125b_bar0_regs u_bar0 (
     .irq_pulse         (irq_pulse)
 );
 
-// BAR0 CplD builder (highest TX priority, keeps EAC from timing out)
-// CplD DW layout:
-//   DW0 = 0x4A00_0001  (Fmt=10, Type=01010, Length=1)
-//   DW1 = {cfg_completer_id, 3'b000, 1'b0, 11'd4}  (byte count=4)
-//   DW2 = {rx_req_id, rx_tag, 1'b0, rx_bar0_addr[6:0]}
-//   DW3 = bar0_rdata
-//
-//   Beat0: {DW1, DW0}  tkeep=0xFF  tlast=0
-//   Beat1: {DW3, DW2}  tkeep=0xFF  tlast=1   (#5 fix: bar0_rdata not cfg_rdata)
-
+// BAR0 completion with one DWORD of data. Snapshot both beats so a stall
+// or a change to the receive-side registers cannot alter an offered beat.
 localparam logic [31:0] CPLD_DW0 = 32'h4A00_0001;
-
-typedef enum logic [1:0] {
-    BAR_IDLE,
-    BAR_B0,   // emit beat0
-    BAR_B1    // emit beat1
-} bar_tx_state_t;
-
+typedef enum logic [1:0] {BAR_IDLE, BAR_B0, BAR_B1} bar_tx_state_t;
 bar_tx_state_t bar_tx_q;
-
-logic [63:0] bar_tx_data_q;
-logic  [7:0] bar_tx_keep_q;
-logic        bar_tx_valid_q, bar_tx_last_q;
-
-// Latch requester info at header capture time
-logic [15:0] bar_req_id_latch;
-logic  [7:0] bar_tag_latch;
-logic [31:0] bar_addr_latch;
+logic [63:0] bar_tx_data_q, bar_tx_payload_q;
+wire bar_tx_last = bar_tx_q == BAR_B1;
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        bar_tx_q        <= BAR_IDLE;
-        bar_tx_valid_q  <= 1'b0;
-        bar_tx_data_q   <= '0;
-        bar_tx_keep_q   <= '0;
-        bar_tx_last_q   <= 1'b0;
-        bar_req_id_latch <= '0;
-        bar_tag_latch    <= '0;
-        bar_addr_latch   <= '0;
+        bar_tx_q         <= BAR_IDLE;
+        bar_tx_data_q    <= '0;
+        bar_tx_payload_q <= '0;
     end else begin
         case (bar_tx_q)
-            BAR_IDLE: begin
-                bar_tx_valid_q <= 1'b0;
-                if (bar0_rvalid) begin
-                    // Latch request context captured at header time
-                    bar_req_id_latch <= rx_req_id;
-                    bar_tag_latch    <= rx_tag;
-                    bar_addr_latch   <= rx_bar0_addr;
-                    bar_tx_q         <= BAR_B0;
-                end
-            end
-
-            BAR_B0: begin
-                // (#4 fix) rsp_start is wired from this path, not from 1'b0
-                // (#5 fix) DW3=bar0_rdata (not cfg_rdata)
-                bar_tx_valid_q <= 1'b1;
-                bar_tx_data_q  <= {
-                    {cfg_completer_id, 3'b000, 1'b0, 11'd4},  // DW1
-                    CPLD_DW0                                   // DW0
+            BAR_IDLE: if (bar0_rvalid) begin
+                bar_tx_data_q <= {cfg_completer_id, 3'b000, 1'b0, 12'd4, CPLD_DW0};
+                bar_tx_payload_q <= {
+                    bar0_rdata, rx_req_id, rx_tag, 1'b0, rx_bar0_addr[6:0]
                 };
-                bar_tx_keep_q  <= 8'hFF;
-                bar_tx_last_q  <= 1'b0;
-                if (s_axis_tx_tready)
-                    bar_tx_q <= BAR_B1;
+                bar_tx_q <= BAR_B0;
             end
-
-            BAR_B1: begin
-                bar_tx_valid_q <= 1'b1;
-                bar_tx_data_q  <= {
-                    bar0_rdata,                                // DW3 — actual shadow RAM data
-                    {bar_req_id_latch, bar_tag_latch, 1'b0, bar_addr_latch[6:0]}  // DW2
-                };
-                bar_tx_keep_q  <= 8'hFF;
-                bar_tx_last_q  <= 1'b1;
-                if (s_axis_tx_tready) begin
-                    bar_tx_valid_q <= 1'b0;
-                    bar_tx_last_q  <= 1'b0;
-                    bar_tx_q       <= BAR_IDLE;
-                end
+            BAR_B0: if (s_axis_tx_tready) begin
+                bar_tx_data_q <= bar_tx_payload_q;
+                bar_tx_q <= BAR_B1;
             end
-
+            BAR_B1: if (s_axis_tx_tready)
+                bar_tx_q <= BAR_IDLE;
             default: bar_tx_q <= BAR_IDLE;
         endcase
     end
@@ -520,7 +472,7 @@ end
 // =============================================================================
 // SECTION 9 — TX arbitration: BAR0 CplD (hi) > DMA TLPs (lo)
 // =============================================================================
-// BAR0 CplD must be serviced first to avoid EAC config-read timeouts.
+// Prioritize an outstanding BAR0 completion.
 
 logic bar_tx_active;
 assign bar_tx_active = (bar_tx_q != BAR_IDLE);
@@ -529,9 +481,9 @@ always_comb begin
     if (bar_tx_active) begin
         // BAR0 CplD wins
         s_axis_tx_tdata  = bar_tx_data_q;
-        s_axis_tx_tkeep  = bar_tx_keep_q;
-        s_axis_tx_tvalid = bar_tx_valid_q;
-        s_axis_tx_tlast  = bar_tx_last_q;
+        s_axis_tx_tkeep  = 8'hff;
+        s_axis_tx_tvalid = 1'b1;
+        s_axis_tx_tlast  = bar_tx_last;
         dma_tx_ready     = 1'b0;
     end else begin
         // DMA engine has the bus
@@ -545,34 +497,29 @@ end
 
 // =============================================================================
 // SECTION 10 — Response packager (ft601_clk domain)
-// (#4 fix: rsp_start wired from frame_done path, never 1'b0)
 // =============================================================================
-// The response packager frames DMA read-back data for the USB host.
-// frame_done_ft pulses when a full USB command frame has been processed.
-
-logic        rsp_busy_ft, rsp_done_ft;
+// Open the response on the read command. Pop each payload word only when
+// the packager accepts it, then allow the parser to issue the next read.
+logic        rsp_done_ft;
 logic        pld_valid_ft, pld_ready_ft;
 logic [31:0] pld_data_ft;
 logic        rsp_fifo_wr_valid_ft, rsp_fifo_wr_ready_ft;
 logic [31:0] rsp_fifo_wr_data_ft;
 logic        rsp_fifo_wr_last_ft;
 
-// Use frame_done_ft as rsp_start (#4 fix)
-logic rsp_start_ft;
-assign rsp_start_ft = frame_done_ft;
-
 // Payload: data from response FIFO (already in ft601_clk after CDC)
-assign pld_valid_ft  = !rsp_fifo_empty;
+assign pld_valid_ft  = ft601_rst_n && !rsp_fifo_empty && !rsp_rd_busy;
+assign rsp_fifo_rd_en = pld_valid_ft && pld_ready_ft;
 assign pld_data_ft   = rsp_fifo_dout;
 
 ft601_resp_packager u_resp_packager (
     .clk             (ft601_clk),
     .rst_n           (ft601_rst_n),
-    .rsp_start       (rsp_start_ft),
+    .rsp_start       (read_start_ft),
     .rsp_opcode_canon(last_opcode_ft),
     .rsp_flags       (8'h00),
-    .rsp_addr        (last_base_addr_ft),
-    .rsp_length_dw   (16'd1),
+    .rsp_addr        (fifo_rd_data),
+    .rsp_length_dw   (read_length_ft),
     .rsp_busy        (rsp_busy_ft),
     .rsp_done        (rsp_done_ft),
     .pld_valid       (pld_valid_ft),
@@ -587,80 +534,5 @@ ft601_resp_packager u_resp_packager (
 
 // fifo_wr_be: all bytes valid for response frames
 assign fifo_wr_be = 4'hF;
-
-// =============================================================================
-// SECTION 11 — cfg_ext → ECAP mux
-// The 7-series PCIe IP forwards extended config space accesses (register_number
-// >= 0x040 = byte offset 0x100) through cfg_ext_* ports.  We decode the DW
-// address and dispatch to the appropriate ECAP module, then register the
-// response one cycle later (IP requires data within 2 clocks of read_received).
-//
-// DW address map:
-//   AER  0x040..0x04A  (11 DWs, bytes 0x100..0x128)
-//   DSN  0x054..0x056  ( 3 DWs, bytes 0x150..0x158)
-//   LTR  0x058..0x059  ( 2 DWs, bytes 0x160..0x164)
-// =============================================================================
-
-// ---- Address decode ---------------------------------------------------------
-logic        ecap_aer_sel, ecap_dsn_sel, ecap_ltr_sel;
-assign ecap_aer_sel = (cfg_ext_register_number >= 10'h040) &&
-                      (cfg_ext_register_number <= 10'h04A);
-assign ecap_dsn_sel = (cfg_ext_register_number >= 10'h054) &&
-                      (cfg_ext_register_number <= 10'h056);
-assign ecap_ltr_sel = (cfg_ext_register_number >= 10'h058) &&
-                      (cfg_ext_register_number <= 10'h059);
-
-logic [3:0] aer_dw_idx, dsn_dw_idx, ltr_dw_idx;
-assign aer_dw_idx = cfg_ext_register_number[3:0] - 4'h0;  // relative to 0x040
-assign dsn_dw_idx = cfg_ext_register_number[1:0] - 2'h0;  // relative to 0x054
-assign ltr_dw_idx = cfg_ext_register_number[0];            // relative to 0x058
-
-// ---- ECAP module instances --------------------------------------------------
-logic [31:0] aer_rd_data_w, dsn_rd_data_w, ltr_rd_data_w;
-
-pcie_ecap_aer u_ecap_aer (
-    .clk       (user_clk),
-    .rst_n     (user_rst_n),
-    .cap_rd_en (cfg_ext_read_received  && ecap_aer_sel),
-    .cap_wr_en (cfg_ext_write_received && ecap_aer_sel),
-    .cap_dw_idx(aer_dw_idx),
-    .cap_be    (cfg_ext_write_byte_enable),
-    .cap_wdata (cfg_ext_write_data),
-    .cap_rdata (aer_rd_data_w)
-);
-
-pcie_ecap_dsn u_ecap_dsn (
-    // DSN is read-only / combinational — no clk/rst/wr ports
-    .cap_rd_en (cfg_ext_read_received  && ecap_dsn_sel),
-    .cap_dw_idx(dsn_dw_idx[1:0]),
-    .cap_rdata (dsn_rd_data_w)
-);
-
-pcie_ecap_ltr u_ecap_ltr (
-    .clk       (user_clk),
-    .rst_n     (user_rst_n),
-    .cap_rd_en (cfg_ext_read_received  && ecap_ltr_sel),
-    .cap_wr_en (cfg_ext_write_received && ecap_ltr_sel),
-    .cap_dw_idx(ltr_dw_idx[0]),
-    .cap_be    (cfg_ext_write_byte_enable),
-    .cap_wdata (cfg_ext_write_data),
-    .cap_rdata (ltr_rd_data_w)
-);
-
-// ---- One-cycle registered response (IP requires valid within 2 clocks) ------
-always_ff @(posedge user_clk or negedge user_rst_n) begin
-    if (!user_rst_n) begin
-        cfg_ext_read_data       <= 32'hFFFF_FFFF;
-        cfg_ext_read_data_valid <= 1'b0;
-    end else begin
-        cfg_ext_read_data_valid <= cfg_ext_read_received;
-        if (cfg_ext_read_received) begin
-            if      (ecap_aer_sel) cfg_ext_read_data <= aer_rd_data_w;
-            else if (ecap_dsn_sel) cfg_ext_read_data <= dsn_rd_data_w;
-            else if (ecap_ltr_sel) cfg_ext_read_data <= ltr_rd_data_w;
-            else                   cfg_ext_read_data <= 32'hFFFF_FFFF; // unsupported ECAP → all-F
-        end
-    end
-end
 
 endmodule

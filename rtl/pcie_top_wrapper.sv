@@ -15,15 +15,17 @@ module pcie_top_wrapper (
     output logic [0:0]  pci_exp_txp,
     output logic [0:0]  pci_exp_txn,
 
+    input  logic        board_clk,
     input  logic        ft601_clk,
-    input  logic        ft601_rst_n,
+    output logic        ft601_rst_n,
+    output logic        ft601_siwu_n,
     input  logic        ft601_rxf_n,
     output logic        ft601_oe_n,
     output logic        ft601_rd_n,
     output logic        ft601_wr_n,
     input  logic        ft601_txe_n,
-    inout  logic [31:0] ft601_data,
-    inout  logic [3:0]  ft601_be,
+    inout  wire  [31:0] ft601_data,
+    inout  wire  [3:0]  ft601_be,
 
     output logic        user_lnk_up_pin
 );
@@ -40,6 +42,24 @@ module pcie_top_wrapper (
     // --- PERST# ---
     logic sys_rst_n_ibuf;
     IBUF u_perst_ibuf (.I(sys_rst_n), .O(sys_rst_n_ibuf));
+
+    // Release the bridge after 64 board clock cycles. The bridge supplies
+    // ft601_clk, so startup reset must use the independent board oscillator.
+    logic [6:0] ft601_startup_count = '0;
+    always_ff @(posedge board_clk) begin
+        if (!ft601_startup_count[6])
+            ft601_startup_count <= ft601_startup_count + 1'b1;
+    end
+    assign ft601_rst_n = ft601_startup_count[6];
+    assign ft601_siwu_n = 1'b1;
+
+    (* ASYNC_REG = "TRUE" *) logic [1:0] ft601_reset_release = '0;
+    always_ff @(posedge ft601_clk or negedge ft601_rst_n) begin
+        if (!ft601_rst_n)
+            ft601_reset_release <= '0;
+        else
+            ft601_reset_release <= {ft601_reset_release[0], 1'b1};
+    end
 
     // --- User-side clock / reset ---
     logic user_clk_q;
@@ -76,21 +96,9 @@ module pcie_top_wrapper (
     // Per PCI Express Base Spec 3.0 §7.8.8:
     //   Link Speed encoding: 0001=Gen1 (2.5 GT/s), 0010=Gen2 (5 GT/s)
     //   Link Width encoding: 000001=x1, 000010=x2 …
-    logic [15:0] cfg_lstatus;
-
-    // --- cfg_ext: pcie_7x_v3_3 removed the external cfg_ext_* ports entirely. ---
-    // Extended config space (AER, DSN, MSI) is handled internally by the IP
-    // via CONFIG parameters (AER_BASE_PTR, AER_CAP_ON, DSN_Enabled, MSI_Enabled).
-    // These wires are kept so the endpoint ECAP mux compiles; all IP-driven
-    // signals are tied to 0 — endpoint ECAP handler never fires, which is correct.
-    logic        cfg_ext_read_received;
-    logic        cfg_ext_write_received;
-    logic  [9:0] cfg_ext_register_number;
-    logic  [7:0] cfg_ext_function_number;
-    logic [31:0] cfg_ext_write_data;
-    logic  [3:0] cfg_ext_write_byte_enable;
-    logic [31:0] cfg_ext_read_data;
-    logic        cfg_ext_read_data_valid;
+    logic [15:0] cfg_lstatus, cfg_dcommand;
+    assign cfg_max_payload_size = cfg_dcommand[7:5];
+    assign cfg_max_read_req_size = cfg_dcommand[14:12];
 
     pcie_7x_0 u_pcie_7x (
         .pci_exp_txp              (pci_exp_txp),
@@ -137,8 +145,7 @@ module pcie_top_wrapper (
         .cfg_bus_number               (cfg_bus_number),
         .cfg_device_number            (cfg_device_number),
         .cfg_function_number          (cfg_function_number),
-        .cfg_dev_control_max_payload  (cfg_max_payload_size),
-        .cfg_dev_control_max_read_req (cfg_max_read_req_size),
+        .cfg_dcommand                 (cfg_dcommand),
         .cfg_lstatus                  (cfg_lstatus),
 
         .cfg_mgmt_di              (32'h0),
@@ -190,21 +197,29 @@ module pcie_top_wrapper (
         .cfg_err_acs              (1'b0),
         .cfg_err_aer_headerlog    (128'h0),
         .cfg_aer_interrupt_msgnum (5'h0),
-        .cfg_err_posted           (1'b0)
-        // cfg_ext_* ports removed in pcie_7x_v3_3 — extended config space is
-        // handled internally by the IP via AER_BASE_PTR/AER_CAP_ON/DSN/MSI params.
-    );
+        .cfg_err_posted           (1'b0),
 
-    // Tie off cfg_ext_* signals that the IP no longer drives — endpoint ECAP mux
-    // compiles and links, but the handler never fires.  AER/DSN/MSI are presented
-    // correctly via the IP's internal ECAP chain (CONFIG params in vivado_build.tcl).
-    assign cfg_ext_read_received     = 1'b0;
-    assign cfg_ext_write_received    = 1'b0;
-    assign cfg_ext_register_number   = 10'h0;
-    assign cfg_ext_function_number   = 8'h0;
-    assign cfg_ext_write_data        = 32'h0;
-    assign cfg_ext_write_byte_enable = 4'h0;
-    // cfg_ext_read_data / cfg_ext_read_data_valid driven by endpoint → now unused on IP side.
+        // Defaults from the generated core for unused interfaces.
+        .cfg_trn_pending              (1'b0),
+        .cfg_turnoff_ok               (1'b0),
+        .cfg_dsn                      (64'b0),
+        .cfg_ds_bus_number            (8'b0),
+        .cfg_ds_device_number         (5'b0),
+        .cfg_ds_function_number       (3'b0),
+        .cfg_mgmt_wr_rw1c_as_rw       (1'b0),
+        .pl_directed_link_change      (2'b0),
+        .pl_directed_link_width       (2'b0),
+        .pl_directed_link_speed       (1'b0),
+        .pl_directed_link_auton       (1'b0),
+        .pl_upstream_prefer_deemph    (1'b1),
+        .pl_transmit_hot_rst          (1'b0),
+        .pl_downstream_deemph_source  (1'b0),
+        .pcie_drp_clk                 (1'b0),
+        .pcie_drp_en                  (1'b0),
+        .pcie_drp_we                  (1'b0),
+        .pcie_drp_addr                (9'b0),
+        .pcie_drp_di                  (16'b0)
+    );
 
     assign cfg_completer_id = {cfg_bus_number, cfg_device_number, cfg_function_number};
 
@@ -245,23 +260,13 @@ module pcie_top_wrapper (
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
 
         .ft601_clk                (ft601_clk),
-        .ft601_rst_n              (ft601_rst_n),
+        .ft601_rst_n              (ft601_reset_release[1]),
         .ft601_rxf_n              (ft601_rxf_n),
         .ft601_oe_n               (ft601_oe_n),
         .ft601_rd_n               (ft601_rd_n),
         .ft601_wr_n               (ft601_wr_n),
         .ft601_txe_n              (ft601_txe_n),
         .ft601_data               (ft601_data),
-        .ft601_be                 (ft601_be),
-
-        // cfg_ext → ECAP mux (SECTION 11 in pcie_custom_endpoint_top)
-        .cfg_ext_read_received    (cfg_ext_read_received),
-        .cfg_ext_write_received   (cfg_ext_write_received),
-        .cfg_ext_register_number  (cfg_ext_register_number),
-        .cfg_ext_function_number  (cfg_ext_function_number),
-        .cfg_ext_write_data       (cfg_ext_write_data),
-        .cfg_ext_write_byte_enable(cfg_ext_write_byte_enable),
-        .cfg_ext_read_data        (cfg_ext_read_data),
-        .cfg_ext_read_data_valid  (cfg_ext_read_data_valid)
+        .ft601_be                 (ft601_be)
     );
 endmodule

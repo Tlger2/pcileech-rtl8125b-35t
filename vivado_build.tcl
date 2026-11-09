@@ -27,40 +27,26 @@ file mkdir $rpt_dir
 if {[file exists "$project_dir/$project_name.xpr"]} {
     open_project "$project_dir/$project_name.xpr"
 } else {
-    create_project $project_name $project_dir -part $part -force
+    create_project $project_name $project_dir -part $part
     set_property target_language Verilog [current_project]
     set_property default_lib      work         [current_project]
 }
 
-# Enable XPM libraries — required for xpm_fifo_async (CDC FIFOs in endpoint).
-# Must be called after open_project/create_project, before add_files.
-set_property XPM_LIBRARIES {XPM_CDC XPM_FIFO XPM_MEMORY} [current_project]
-
-# ---------------------------------------------------------------------------
-# 2. Add RTL sources
-# ---------------------------------------------------------------------------
-# Top-level
-add_files -norecurse [glob $rtl_dir/*.sv] -fileset [get_filesets sources_1]
-# ECAP sub-modules
-if {[file isdirectory "$rtl_dir/ecap"]} {
-    add_files -norecurse [glob $rtl_dir/ecap/*.sv] -fileset [get_filesets sources_1]
+set_property XPM_LIBRARIES {XPM_CDC XPM_MEMORY XPM_FIFO} [current_project]
+set srcset [get_filesets sources_1]
+set_property source_mgmt_mode DisplayOnly [current_project]
+set rtl_files [glob -nocomplain -directory $rtl_dir *.sv caps/*.sv ecap/*.sv]
+foreach path $rtl_files {
+    set src [get_files -quiet -of_objects $srcset $path]
+    if {![llength $src]} {
+        add_files -norecurse -fileset $srcset $path
+        set src [get_files -quiet -of_objects $srcset $path]
+    }
+    set_property file_type SystemVerilog $src
 }
-# PCI capability chain (PM, MSI, MSI-X, PCIe cap)
-if {[file isdirectory "$rtl_dir/caps"]} {
-    add_files -norecurse [glob $rtl_dir/caps/*.sv] -fileset [get_filesets sources_1]
-}
-# Crypto path (ChaCha20, TRNG, session FSM, frame encryptor)
-if {[file isdirectory "$rtl_dir/crypto"]} {
-    add_files -norecurse [glob $rtl_dir/crypto/*.sv] -fileset [get_filesets sources_1]
-}
-# Package files (must come first for elaboration)
-set pkg_files [glob -nocomplain $rtl_dir/*_pkg.sv]
-if {[llength $pkg_files] > 0} {
-    set_property file_type {SystemVerilog} [get_files {*_pkg.sv}]
-}
-# Set top
-set_property top pcie_top_wrapper [get_filesets sources_1]
+set_property top pcie_top_wrapper $srcset
 update_compile_order -fileset sources_1
+set_property top pcie_top_wrapper $srcset
 
 # ---------------------------------------------------------------------------
 # 3. Add XDC constraints
@@ -73,7 +59,7 @@ if {[file isdirectory $xdc_dir]} {
         puts "WARN: No .xdc files found in $xdc_dir — add CaptainDMA 35T pin constraints"
     }
 } else {
-    puts "WARN: xdc/ directory not found — synthesis will likely fail on pin assignment"
+    puts "WARN: xdc/ directory not found — board pinout is required for bitstream generation"
 }
 
 # ---------------------------------------------------------------------------
@@ -141,75 +127,62 @@ if {[llength $ip_exists] == 0} {
 }
 
 # ---------------------------------------------------------------------------
-# 5. Synthesis
-# ---------------------------------------------------------------------------
-puts "INFO: Starting synthesis..."
-launch_runs synth_1 -jobs 4
-wait_on_run synth_1
-set synth_status [get_property STATUS [get_runs synth_1]]
-puts "INFO: Synthesis status: $synth_status"
-if {[get_property PROGRESS [get_runs synth_1]] != "100%"} {
-    puts "ERROR: Synthesis did not complete 100%"
-    open_run synth_1
-    report_timing_summary -file $rpt_dir/synth_timing.rpt
-    exit 1
+# 5. Use the IP's internal PIPE clock generator; the wrapper has no external
+# PIPE clock module. Leave the rest of an existing IP customization intact.
+set core [get_ips pcie_7x_0]
+if {[get_property CONFIG.en_ext_clk $core]} {
+    set_property CONFIG.en_ext_clk false $core
+    generate_target all $core
 }
+report_ip_status -file $rpt_dir/ip_status.rpt
 
-# ---------------------------------------------------------------------------
-# 6. Implementation
-# ---------------------------------------------------------------------------
-puts "INFO: Starting implementation..."
-launch_runs impl_1 -jobs 4
-wait_on_run impl_1
-set impl_status [get_property STATUS [get_runs impl_1]]
-puts "INFO: Implementation status: $impl_status"
-if {[get_property PROGRESS [get_runs impl_1]] != "100%"} {
-    puts "ERROR: Implementation did not complete 100%"
-    open_run impl_1
-    report_timing_summary -file $rpt_dir/impl_timing.rpt
-    exit 1
+# Synthesis and implementation
+# Save the previous run's diagnostics before reset_run clears its directory.
+set archive_dir [file join $rpt_dir [clock format [clock seconds] -format %Y%m%d-%H%M%S]-[pid]]
+file mkdir $archive_dir
+foreach name {synth_1 impl_1} {
+    set run [get_runs $name]
+    set status [get_property STATUS $run]
+    puts "INFO: Previous $name status: $status"
+    if {[string match -nocase "*running*" $status] || [string match -nocase "*queued*" $status]} {
+        error "Run $name is active; wait for it to finish before rebuilding."
+    }
+    foreach log [glob -nocomplain -directory [get_property DIRECTORY $run] *.log *.jou *.rpt] {
+        file copy $log [file join $archive_dir ${name}_[file tail $log]]
+    }
 }
-
-# ---------------------------------------------------------------------------
-# 7. Timing + utilisation reports
-# ---------------------------------------------------------------------------
+proc run_step {name step} {
+    launch_runs $name -to_step $step -jobs 4
+    catch {wait_on_run -timeout 20 $name} wait_message
+    set status [get_property STATUS [get_runs $name]]
+    puts "INFO: $name status: $status"
+    if {![string match "${step} Complete*" $status]} {
+        error "$name failed or timed out at $step: $status ($wait_message). See [get_property DIRECTORY [get_runs $name]]/runme.log"
+    }
+}
+reset_run synth_1
+run_step synth_1 synth_design
+open_run synth_1
+report_utilization -file $archive_dir/synth_utilization.rpt
+report_timing_summary -report_unconstrained -file $archive_dir/synth_timing.rpt
+report_drc -file $archive_dir/synth_drc.rpt
+report_cdc -file $archive_dir/synth_cdc.rpt
+close_design
+run_step impl_1 route_design
 open_run impl_1
-report_timing_summary  -max_paths 20 -file $rpt_dir/timing_summary.rpt
-report_utilization               -file $rpt_dir/utilization.rpt
-report_clock_interaction         -file $rpt_dir/clock_interaction.rpt
-report_drc                       -file $rpt_dir/drc.rpt
-puts "INFO: Reports written to $rpt_dir/"
-
-# ---------------------------------------------------------------------------
-# 8. Check timing
-# ---------------------------------------------------------------------------
+report_timing_summary -report_unconstrained -max_paths 20 -file $archive_dir/timing_summary.rpt
+report_utilization -file $archive_dir/utilization.rpt
+report_clock_interaction -file $archive_dir/clock_interaction.rpt
+report_drc -file $archive_dir/drc.rpt
+report_cdc -file $archive_dir/cdc.rpt
 set wns [get_property STATS.WNS [get_runs impl_1]]
 set whs [get_property STATS.WHS [get_runs impl_1]]
-puts "INFO: WNS = $wns ns   WHS = $whs ns"
-if {$wns < 0 || $whs < 0} {
-    puts "WARN: Timing violations present — do NOT flash this bitstream"
-    puts "WARN: Check $rpt_dir/timing_summary.rpt for details"
+if {$wns eq "" || $whs eq "" || $wns < 0 || $whs < 0} {
+    error "Bitstream withheld: routed timing did not pass (WNS=$wns, WHS=$whs)."
 }
-
-# ---------------------------------------------------------------------------
-# 9. Bitstream
-# ---------------------------------------------------------------------------
-puts "INFO: Generating bitstream..."
-launch_runs impl_1 -to_step write_bitstream -jobs 4
-wait_on_run impl_1
-set bit_file [file normalize \
-    "$project_dir/$project_name.runs/impl_1/pcie_top_wrapper.bit"]
-if {[file exists $bit_file]} {
-    file copy -force $bit_file [file normalize "[file dirname [info script]]/pcie_top_wrapper.bit"]
-    puts "INFO: Bitstream copied to [file dirname [info script]]/pcie_top_wrapper.bit"
-} else {
-    puts "ERROR: Bitstream not found at expected path: $bit_file"
-    exit 1
+if {[llength [get_files -quiet -of_objects [get_filesets constrs_1] -filter {FILE_TYPE == XDC}]] == 0} {
+    error "Bitstream withheld: constrs_1 has no board XDC."
 }
-
-puts ""
-puts "========================================"
-puts "  BUILD COMPLETE"
-puts "  Bitstream: [file dirname [info script]]/pcie_top_wrapper.bit"
-puts "  Next step: Hardware Manager -> Program Device"
-puts "========================================"
+close_design
+run_step impl_1 write_bitstream
+puts "INFO: Bitstream: [get_property DIRECTORY [get_runs impl_1]]/pcie_top_wrapper.bit"
