@@ -131,6 +131,24 @@ set_false_path -hold \
     -from [get_clocks -filter {NAME !~ ft601_clk && NAME !~ board_clk}] \
     -to   [get_clocks ft601_clk]
 
+# Cell-based hold false-paths for xpm_fifo_async CDC gray-counter chains.
+# When FIFO_MEMORY_TYPE=distributed (depth=16 on Artix-7), Vivado maps the gray
+# counter to RAM32M outputs rather than FFs.  xpm_cdc_gray.tcl's
+# "set_max_delay -datapath_only -from src_gray_ff_reg" then fails with
+# "not a valid startpoint" (RAM output is not a sequential cell Q pin).
+# Without that constraint the router still checks hold on the async crossing.
+# The clock-domain false-paths above depend on pcie_user_clk being a named clock,
+# which requires GT→MMCM propagation that Vivado may not complete.
+# Targeting the destination synchronizer FFs directly is clock-name-agnostic and
+# always applies — the ASYNC_REG chain is designed to tolerate metastability,
+# so suppressing hold on its input stage is architecturally correct.
+set_false_path -hold \
+    -to [get_cells -hierarchical -filter {NAME =~ *dest_graysync_ff_reg* && IS_SEQUENTIAL == 1}]
+
+# Reset synchronizer within xpm_fifo_rst (xpm_cdc_sync_rst) — same rationale.
+set_false_path -hold \
+    -to [get_cells -hierarchical -filter {NAME =~ *arststages_ff_reg*     && IS_SEQUENTIAL == 1}]
+
 #------------------------------------------------------------------------------
 # FT601 input/output delays — FTDI DS_FT600Q-FT601Q v1.06 table 4.2
 # 100 MHz, zero PCB skew assumed.
