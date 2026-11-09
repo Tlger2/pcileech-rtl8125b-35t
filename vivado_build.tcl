@@ -28,7 +28,7 @@ if {[file exists "$project_dir/$project_name.xpr"]} {
     open_project "$project_dir/$project_name.xpr"
 } else {
     create_project $project_name $project_dir -part $part -force
-    set_property target_language SystemVerilog [current_project]
+    set_property target_language Verilog [current_project]
     set_property default_lib      work         [current_project]
 }
 
