@@ -78,9 +78,11 @@ module pcie_top_wrapper (
     //   Link Width encoding: 000001=x1, 000010=x2 …
     logic [15:0] cfg_lstatus;
 
-    // --- cfg_ext: Extended config space (ECAP ≥0x100) forwarded by PCIe IP ---
-    // IP drives the _received/_number/_data/_be outputs; user logic drives back
-    // cfg_ext_read_data[31:0] and cfg_ext_read_data_valid within 2 user_clk cycles.
+    // --- cfg_ext: pcie_7x_v3_3 removed the external cfg_ext_* ports entirely. ---
+    // Extended config space (AER, DSN, MSI) is handled internally by the IP
+    // via CONFIG parameters (AER_BASE_PTR, AER_CAP_ON, DSN_Enabled, MSI_Enabled).
+    // These wires are kept so the endpoint ECAP mux compiles; all IP-driven
+    // signals are tied to 0 — endpoint ECAP handler never fires, which is correct.
     logic        cfg_ext_read_received;
     logic        cfg_ext_write_received;
     logic  [9:0] cfg_ext_register_number;
@@ -132,12 +134,12 @@ module pcie_top_wrapper (
         .fc_ph                    (),
         .fc_sel                   (3'b000),
 
-        .cfg_bus_number           (cfg_bus_number),
-        .cfg_device_number        (cfg_device_number),
-        .cfg_function_number      (cfg_function_number),
-        .cfg_max_payload_size     (cfg_max_payload_size),
-        .cfg_max_read_req_size    (cfg_max_read_req_size),
-        .cfg_lstatus              (cfg_lstatus),
+        .cfg_bus_number               (cfg_bus_number),
+        .cfg_device_number            (cfg_device_number),
+        .cfg_function_number          (cfg_function_number),
+        .cfg_dev_control_max_payload  (cfg_max_payload_size),
+        .cfg_dev_control_max_read_req (cfg_max_read_req_size),
+        .cfg_lstatus                  (cfg_lstatus),
 
         .cfg_mgmt_di              (32'h0),
         .cfg_mgmt_byte_en         (4'h0),
@@ -160,11 +162,8 @@ module pcie_top_wrapper (
         .cfg_interrupt_stat       (1'b0),
         .cfg_pciecap_interrupt_msgnum (5'h0),
 
-        .cfg_vend_id              (16'h10EC),
-        .cfg_dev_id               (16'h8125),
-        .cfg_rev_id               (8'h36),
-        .cfg_subsys_vend_id       (16'h10EC),
-        .cfg_subsys_id            (16'h8125),
+        // cfg_vend_id/cfg_dev_id/cfg_rev_id/cfg_subsys_* are NOT external ports
+        // in pcie_7x_v3_3 — IDs are baked in from CONFIG properties in vivado_build.tcl.
 
         .cfg_pm_force_state_en    (1'b0),
         .cfg_pm_force_state       (2'b00),
@@ -191,20 +190,21 @@ module pcie_top_wrapper (
         .cfg_err_acs              (1'b0),
         .cfg_err_aer_headerlog    (128'h0),
         .cfg_aer_interrupt_msgnum (5'h0),
-        .cfg_err_posted           (1'b0),
-
-        // Extended config space (ECAP region ≥0x100) — PG054 §2.3
-        // IP drives read_received/write_received/register_number/function_number/
-        // write_data/write_byte_enable; user logic responds with read_data/valid.
-        .cfg_ext_read_received    (cfg_ext_read_received),
-        .cfg_ext_write_received   (cfg_ext_write_received),
-        .cfg_ext_register_number  (cfg_ext_register_number),
-        .cfg_ext_function_number  (cfg_ext_function_number),
-        .cfg_ext_write_data       (cfg_ext_write_data),
-        .cfg_ext_write_byte_enable(cfg_ext_write_byte_enable),
-        .cfg_ext_read_data        (cfg_ext_read_data),
-        .cfg_ext_read_data_valid  (cfg_ext_read_data_valid)
+        .cfg_err_posted           (1'b0)
+        // cfg_ext_* ports removed in pcie_7x_v3_3 — extended config space is
+        // handled internally by the IP via AER_BASE_PTR/AER_CAP_ON/DSN/MSI params.
     );
+
+    // Tie off cfg_ext_* signals that the IP no longer drives — endpoint ECAP mux
+    // compiles and links, but the handler never fires.  AER/DSN/MSI are presented
+    // correctly via the IP's internal ECAP chain (CONFIG params in vivado_build.tcl).
+    assign cfg_ext_read_received     = 1'b0;
+    assign cfg_ext_write_received    = 1'b0;
+    assign cfg_ext_register_number   = 10'h0;
+    assign cfg_ext_function_number   = 8'h0;
+    assign cfg_ext_write_data        = 32'h0;
+    assign cfg_ext_write_byte_enable = 4'h0;
+    // cfg_ext_read_data / cfg_ext_read_data_valid driven by endpoint → now unused on IP side.
 
     assign cfg_completer_id = {cfg_bus_number, cfg_device_number, cfg_function_number};
 
