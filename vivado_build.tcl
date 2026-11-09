@@ -71,8 +71,15 @@ if {[file isdirectory $xdc_dir]} {
 # Check if IP already exists
 set ip_exists [get_ips -quiet pcie_7x_0]
 if {[llength $ip_exists] == 0} {
-    create_ip -name pcie7x_0 -vendor xilinx.com -library ip \
-              -version 3.3 -module_name pcie_7x_0
+    # Query available version — 3.3 on 2019.x+; may be higher on 2026.1
+    set avail [get_ipdefs -filter {NAME == pcie_7x_0} -quiet]
+    if {[llength $avail] == 0} {
+        error "pcie_7x_0 IP not found in catalog — check Vivado installation"
+    }
+    set ip_ver [lindex [split [lindex $avail 0] {:}] end]
+    puts "INFO: using pcie_7x_0 version $ip_ver"
+    create_ip -name pcie_7x_0 -vendor xilinx.com -library ip \
+              -version $ip_ver -module_name pcie_7x_0
 
     set_property -dict [list \
         CONFIG.Bar0_Scale              {Kilobytes} \
