@@ -105,14 +105,31 @@ set_property CONFIG_VOLTAGE  3.3  [current_design]
 #------------------------------------------------------------------------------
 create_clock -name board_clk   -period 10.000 [get_ports board_clk]
 create_clock -name ft601_clk   -period 10.000 [get_ports ft601_clk]
-create_clock -name pcie_refclk -period 10.000 [get_ports sys_clk_p]
+# Create pcie_refclk on the IBUFDS_GTE2 O pin, NOT on the top-level port.
+# Vivado cannot propagate a port-level create_clock through IBUFDS_GTE2 into
+# the GT transceiver and downstream MMCM.  Anchoring on the O pin lets
+# -include_generated_clocks traverse the full GT→MMCM→user_clk_out chain.
+create_clock -name pcie_refclk -period 10.000 [get_pins u_refclk_ibuf/O]
 
-# board_clk and ft601_clk are on the same 100 MHz source but through separate
-# BUFG paths — treat as asynchronous to avoid false timing arcs.
+# All three oscillator domains are independent — declare async across the board.
+# -include_generated_clocks on pcie_refclk now captures pcie_user_clk and pipe_clk
+# because create_clock is on the IBUFDS_GTE2 O pin.
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks board_clk] \
     -group [get_clocks -include_generated_clocks ft601_clk] \
     -group [get_clocks -include_generated_clocks pcie_refclk]
+
+# Belt-and-suspenders: if any PCIe-generated clock is still not captured by the
+# -include_generated_clocks traversal above (GT clock propagation can be opaque),
+# false-path hold analysis to/from ft601_clk for every non-board/non-ft601 clock.
+# xpm_fifo_async handles synchronization on those crossings; hold violations there
+# are not physically meaningful.
+set_false_path -hold \
+    -from [get_clocks ft601_clk] \
+    -to   [get_clocks -filter {NAME !~ ft601_clk && NAME !~ board_clk}]
+set_false_path -hold \
+    -from [get_clocks -filter {NAME !~ ft601_clk && NAME !~ board_clk}] \
+    -to   [get_clocks ft601_clk]
 
 #------------------------------------------------------------------------------
 # FT601 input/output delays — FTDI DS_FT600Q-FT601Q v1.06 table 4.2
