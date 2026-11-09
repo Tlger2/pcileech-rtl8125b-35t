@@ -82,23 +82,45 @@ if {[llength $ip_exists] == 0} {
     create_ip -name pcie_7x -vendor xilinx.com -library ip \
               -version $ip_ver -module_name pcie_7x_0
 
-    # ---------------------------------------------------------------------------
-    # DIAGNOSTIC: dump all CONFIG properties to find correct names in Vivado 2026.1
-    # Remove this block and restore set_property once names are confirmed
-    # ---------------------------------------------------------------------------
-    puts "INFO: Dumping all pcie_7x_0 CONFIG properties..."
-    set ip_obj [get_ips pcie_7x_0]
-    foreach p [lsort [list_property $ip_obj]] {
-        if {[string match CONFIG.* $p]} {
-            if {[catch {set val [get_property $p $ip_obj]} err]} {
-                puts "PROP: $p = <unreadable: $err>"
-            } else {
-                puts "PROP: $p = $val"
-            }
-        }
-    }
-    error "DIAGNOSTIC STOP — grep output for 'PROP:' to find correct property names for 2026.1"
-    # ---------------------------------------------------------------------------
+    # Property names verified against Vivado 2026.1 pcie_7x 3.3 property dump
+    # Key renames from older Vivado:
+    #   AER_CAP_ON   → AER_Enabled
+    #   DSN_CAP_ON   → DSN_Enabled
+    #   MSI_CAP_ON   → MSI_Enabled
+    #   MSIX_CAP_ON  → MSIx_Enabled
+    #   VC_CAP_ON    → VC_Cap_Enabled
+    #   cfg_ext_en   → EXT_PCI_CFG_Space  (enables ECAP forwarding to user logic)
+    #   Class_Code   → removed (derived from Base_Class_Menu + Sub_Class_Interface_Menu)
+    #   Max_Link_Width → removed (use Maximum_Link_Width only)
+    set_property -dict [list \
+        CONFIG.Bar0_Scale               {Kilobytes} \
+        CONFIG.Bar0_Size                {64} \
+        CONFIG.Bar0_64bit               {true} \
+        CONFIG.Bar0_Prefetchable        {true} \
+        CONFIG.Bar1_Enabled             {false} \
+        CONFIG.Bar2_Enabled             {false} \
+        CONFIG.Bar3_Enabled             {false} \
+        CONFIG.Bar4_Enabled             {false} \
+        CONFIG.Bar5_Enabled             {false} \
+        CONFIG.Vendor_ID                {10EC} \
+        CONFIG.Device_ID                {8125} \
+        CONFIG.Revision_ID              {36} \
+        CONFIG.Subsystem_Vendor_ID      {10EC} \
+        CONFIG.Subsystem_ID             {8125} \
+        CONFIG.Base_Class_Menu          {Network_controller} \
+        CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
+        CONFIG.Link_Speed               {5.0_GT/s} \
+        CONFIG.Maximum_Link_Width       {X1} \
+        CONFIG.Max_Payload_Size         {256_bytes} \
+        CONFIG.Extended_Tag_Field       {false} \
+        CONFIG.AER_Enabled              {true} \
+        CONFIG.VC_Cap_Enabled           {false} \
+        CONFIG.DSN_Enabled              {true} \
+        CONFIG.MSIx_Enabled             {false} \
+        CONFIG.MSI_Enabled              {true} \
+        CONFIG.PCIe_Blk_Locn            {X0Y0} \
+        CONFIG.EXT_PCI_CFG_Space        {true} \
+    ] [get_ips pcie_7x_0]
 
     generate_target all [get_ips pcie_7x_0]
     puts "INFO: pcie_7x_0 IP created and targets generated"
