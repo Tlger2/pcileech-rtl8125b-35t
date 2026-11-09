@@ -41,6 +41,14 @@ add_files -norecurse [glob $rtl_dir/*.sv] -fileset [get_filesets sources_1]
 if {[file isdirectory "$rtl_dir/ecap"]} {
     add_files -norecurse [glob $rtl_dir/ecap/*.sv] -fileset [get_filesets sources_1]
 }
+# PCI capability chain (PM, MSI, MSI-X, PCIe cap)
+if {[file isdirectory "$rtl_dir/caps"]} {
+    add_files -norecurse [glob $rtl_dir/caps/*.sv] -fileset [get_filesets sources_1]
+}
+# Crypto path (ChaCha20, TRNG, session FSM, frame encryptor)
+if {[file isdirectory "$rtl_dir/crypto"]} {
+    add_files -norecurse [glob $rtl_dir/crypto/*.sv] -fileset [get_filesets sources_1]
+}
 # Package files (must come first for elaboration)
 set pkg_files [glob -nocomplain $rtl_dir/*_pkg.sv]
 if {[llength $pkg_files] > 0} {
