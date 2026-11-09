@@ -630,13 +630,9 @@ pcie_ecap_aer u_ecap_aer (
 );
 
 pcie_ecap_dsn u_ecap_dsn (
-    .clk       (user_clk),
-    .rst_n     (user_rst_n),
+    // DSN is read-only / combinational — no clk/rst/wr ports
     .cap_rd_en (cfg_ext_read_received  && ecap_dsn_sel),
-    .cap_wr_en (cfg_ext_write_received && ecap_dsn_sel),
     .cap_dw_idx(dsn_dw_idx[1:0]),
-    .cap_be    (cfg_ext_write_byte_enable),
-    .cap_wdata (cfg_ext_write_data),
     .cap_rdata (dsn_rd_data_w)
 );
 
