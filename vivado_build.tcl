@@ -82,37 +82,23 @@ if {[llength $ip_exists] == 0} {
     create_ip -name pcie_7x -vendor xilinx.com -library ip \
               -version $ip_ver -module_name pcie_7x_0
 
-    set_property -dict [list \
-        CONFIG.Bar0_Scale              {Kilobytes} \
-        CONFIG.Bar0_Size               {64} \
-        CONFIG.Bar0_64bit              {true} \
-        CONFIG.Bar0_Prefetchable       {true} \
-        CONFIG.Bar1_Enabled            {false} \
-        CONFIG.Bar2_Enabled            {false} \
-        CONFIG.Bar3_Enabled            {false} \
-        CONFIG.Bar4_Enabled            {false} \
-        CONFIG.Bar5_Enabled            {false} \
-        CONFIG.Vendor_ID               {10EC} \
-        CONFIG.Device_ID               {8125} \
-        CONFIG.Revision_ID             {36} \
-        CONFIG.Subsystem_Vendor_ID     {10EC} \
-        CONFIG.Subsystem_ID            {8125} \
-        CONFIG.Class_Code              {020000} \
-        CONFIG.Base_Class_Menu         {Network_controller} \
-        CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
-        CONFIG.Link_Speed              {5.0_GT/s} \
-        CONFIG.Max_Link_Width          {X1} \
-        CONFIG.Maximum_Link_Width      {X1} \
-        CONFIG.Max_Payload_Size        {256_bytes} \
-        CONFIG.Extended_Tag_Field      {false} \
-        CONFIG.AER_CAP_ON              {true} \
-        CONFIG.VC_CAP_ON               {false} \
-        CONFIG.DSN_CAP_ON              {true} \
-        CONFIG.MSIX_CAP_ON             {false} \
-        CONFIG.MSI_CAP_ON              {true} \
-        CONFIG.PCIe_Blk_Locn           {X0Y0} \
-        CONFIG.cfg_ext_en              {true} \
-    ] [get_ips pcie_7x_0]
+    # ---------------------------------------------------------------------------
+    # DIAGNOSTIC: dump all CONFIG properties to find correct names in Vivado 2026.1
+    # Remove this block and restore set_property once names are confirmed
+    # ---------------------------------------------------------------------------
+    puts "INFO: Dumping all pcie_7x_0 CONFIG properties..."
+    set ip_obj [get_ips pcie_7x_0]
+    foreach p [lsort [list_property $ip_obj]] {
+        if {[string match CONFIG.* $p]} {
+            if {[catch {set val [get_property $p $ip_obj]} err]} {
+                puts "PROP: $p = <unreadable: $err>"
+            } else {
+                puts "PROP: $p = $val"
+            }
+        }
+    }
+    error "DIAGNOSTIC STOP — grep output for 'PROP:' to find correct property names for 2026.1"
+    # ---------------------------------------------------------------------------
 
     generate_target all [get_ips pcie_7x_0]
     puts "INFO: pcie_7x_0 IP created and targets generated"
