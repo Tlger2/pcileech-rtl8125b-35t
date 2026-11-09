@@ -77,8 +77,9 @@ module pcie_ecap_aer #(
 
     // ---- Write / RW1C logic ---------------------------------------------
     function automatic logic [31:0] apply_be(
-        input logic [31:0] cur, wdata;
-        input logic [3:0]  be;
+        input logic [31:0] cur,
+        input logic [31:0] wdata,
+        input logic [3:0]  be
     );
         logic [31:0] m;
         m = {{8{be[3]}}, {8{be[2]}}, {8{be[1]}}, {8{be[0]}}};
