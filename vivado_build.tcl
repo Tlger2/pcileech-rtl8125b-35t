@@ -32,6 +32,10 @@ if {[file exists "$project_dir/$project_name.xpr"]} {
     set_property default_lib      work         [current_project]
 }
 
+# Enable XPM libraries — required for xpm_fifo_async (CDC FIFOs in endpoint).
+# Must be called after open_project/create_project, before add_files.
+set_property XPM_LIBRARIES {XPM_CDC XPM_FIFO XPM_MEMORY} [current_project]
+
 # ---------------------------------------------------------------------------
 # 2. Add RTL sources
 # ---------------------------------------------------------------------------

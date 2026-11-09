@@ -23,7 +23,7 @@ module pcie_top_wrapper (
     output logic        ft601_wr_n,
     input  logic        ft601_txe_n,
     inout  logic [31:0] ft601_data,
-    output logic [3:0]  ft601_be,
+    inout  logic [3:0]  ft601_be,
 
     output logic        user_lnk_up_pin
 );
