@@ -168,7 +168,7 @@ assign cmd_fifo_din   = rf_we_ft
 xpm_fifo_async #(
     .FIFO_WRITE_DEPTH(16),
     .WRITE_DATA_WIDTH(65),
-    .FIFO_MEMORY_TYPE("distributed"),
+    .FIFO_MEMORY_TYPE("block"),      // "block" keeps gray counter as FFs (not RAM32M).
     .CDC_SYNC_STAGES (2),
     .READ_MODE       ("fwft"),
     .FIFO_READ_LATENCY(0),
@@ -218,7 +218,7 @@ logic        rsp_fifo_empty;
 xpm_fifo_async #(
     .FIFO_WRITE_DEPTH(16),
     .WRITE_DATA_WIDTH(32),
-    .FIFO_MEMORY_TYPE("distributed"),
+    .FIFO_MEMORY_TYPE("block"),      // "block" keeps gray counter as FFs (not RAM32M).
     .CDC_SYNC_STAGES (2),
     .READ_MODE       ("fwft"),
     .FIFO_READ_LATENCY(0),
