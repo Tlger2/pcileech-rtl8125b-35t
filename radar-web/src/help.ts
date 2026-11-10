@@ -1,0 +1,16 @@
+export const HELP: Record<string, string> = {
+  dma: "FT601 MAGIC client or MemProcFS snapshot ingest. SIM runs a live world until a bridge is on :1738 / :8080. Disconnect drops back to SIM. Reload Radar reseeds or re-pulls entities.",
+  map: "Reload Map rebuilds the procedural island from the current seed. Interactive camera lets you free-pan without following the local player.",
+  chams: "Full Pink paints every visible player magenta. Not see hides player meshes on the radar except the ESP widget. Default uses team/enemy colors.",
+  memory: "Allow memory features enables the aim write path to the DMA bridge (/aim). Off = read/radar only.",
+  vis: "Visibility Check Chams runs a heightmap LOS test and dims players behind terrain.",
+  adminEsp: "Admin ESP keeps IsAdmin players on a distinct gold marker even when other player filters are tight.",
+  camera: "Interactive camera detaches follow-cam. Drag to pan, wheel to zoom, F to refocus local.",
+  adminFlag: "Treat the local player as admin in overlay flags (debug / server tool).",
+  jump: "Shoot while jumping keeps the aim solver alive while airborne instead of cancelling.",
+  spiderman: "Spiderman removes airborne cancel and boosts climb/move in the local sim path.",
+  night: "Bright Night lifts terrain luminance so night wipes do not hide nodes.",
+  caves: "Bright Caves keeps cave/collectible nodes painted instead of eating them with shadow.",
+  eoka: "Instant Eoka forces eoka held-items to a fired state in the aim/held pipeline.",
+  aim: "Aim assist picks the closest bone in FOV, applies Smooth X/Y, optional lockon, and recoil compensation. Output angles are what get written when memory features are on.",
+};
