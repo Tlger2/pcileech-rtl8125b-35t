@@ -11,7 +11,10 @@ Opcode scrambling mirrors rtl/opcode_scramble_pkg.sv: internal code is
 canonical, on-wire byte is the substituted value. The table is bijective
 so decode_opcode(encode_opcode(x)) == x for every defined x.
 
-Transport: FT601 USB 3.0 bridge via pyftdi (libusb backend).
+Transport: FT601 SuperSpeed FIFO via pyusb/libusb WinUSB bulk transfers
+(VID 0x0403, PID 0x601F, interface 0 / MI_00). The FT601 is not an
+FT232/FT2232 UART; pyftdi's Ftdi product table has no 0x601F and cannot
+open it.
 """
 
 from __future__ import annotations
@@ -22,11 +25,13 @@ from enum import IntEnum
 from typing import Iterable, Optional
 
 try:
-    from pyftdi.usbtools import UsbTools
-    from pyftdi.ftdi import Ftdi
-    _HAVE_PYFTDI = True
+    import usb.backend.libusb1
+    import usb.core
+    import usb.util
+    _HAVE_PYUSB = True
 except ImportError:  # pragma: no cover
-    _HAVE_PYFTDI = False
+    usb = None  # type: ignore[assignment]
+    _HAVE_PYUSB = False
 
 
 FRAME_MAGIC = 0x5AA5_C33C
@@ -148,15 +153,150 @@ def _words(blob: bytes) -> list[int]:
 
 
 # ------------------------------------------------------------------
-# FT601 transport
+# FT601 transport (pyusb WinUSB bulk, not pyftdi UART)
 # ------------------------------------------------------------------
+_LIBUSB_HINT = (
+    "On Windows bind WinUSB to 0403:601F MI_00 (Zadig) and put "
+    "libusb-1.0.dll on PATH; on Linux install libusb-1.0."
+)
+
+# FT601 EEPROM layouts: 1 / 2 / 4 FIFO channels, usually bConfigurationValue 1.
+_FT601_CONFIG_VALUES = (1, 2, 3, 4)
+_FT601_INTERFACE = 0  # MI_00
+
+
+def _is_usb_timeout(exc: BaseException) -> bool:
+    if "timeout" in type(exc).__name__.lower():
+        return True
+    errno = getattr(exc, "errno", None)
+    if errno in (-7, 110, 60, 10060):  # LIBUSB_ERROR_TIMEOUT, ETIMEDOUT, WSAETIMEDOUT
+        return True
+    return "timeout" in str(exc).lower()
+
+
+def _libusb_backend():
+    """Return the libusb-1.0 pyusb backend, or raise a WinUSB/DLL-oriented error."""
+    if not _HAVE_PYUSB:
+        raise RuntimeError("pyusb is not installed. pip install pyusb. " + _LIBUSB_HINT)
+    try:
+        backend = usb.backend.libusb1.get_backend()
+    except Exception as exc:
+        raise RuntimeError(
+            f"pyusb could not load the libusb-1.0 backend ({exc}). {_LIBUSB_HINT}"
+        ) from exc
+    if backend is None:
+        raise RuntimeError("pyusb found no libusb-1.0 backend. " + _LIBUSB_HINT)
+    return backend
+
+
+def _find_ft601(vid: int, pid: int, index: int = 0):
+    backend = _libusb_backend()
+    no_backend = getattr(usb.core, "NoBackendError", RuntimeError)
+    try:
+        found = list(usb.core.find(
+            find_all=True, idVendor=vid, idProduct=pid, backend=backend,
+        ))
+    except no_backend as exc:
+        raise RuntimeError(
+            "pyusb found no libusb-1.0 backend. " + _LIBUSB_HINT
+        ) from exc
+    if not found:
+        raise RuntimeError(
+            f"FT601 {vid:04x}:{pid:04x} not found on USB. {_LIBUSB_HINT}"
+        )
+    if index < 0 or index >= len(found):
+        raise RuntimeError(
+            f"FT601 index {index} out of range ({len(found)} device(s) matched)"
+        )
+    return found[index]
+
+
+def _configure_ft601(dev) -> None:
+    """set_configuration, then common FT601 config values, then the active one."""
+    try:
+        dev.set_configuration()
+        return
+    except usb.core.USBError:
+        pass
+    values: list[int] = []
+    try:
+        values = [int(cfg.bConfigurationValue) for cfg in dev]
+    except Exception:
+        values = []
+    for value in list(dict.fromkeys([*values, *_FT601_CONFIG_VALUES])):
+        try:
+            dev.set_configuration(value)
+            return
+        except usb.core.USBError:
+            continue
+    try:
+        dev.get_active_configuration()
+    except usb.core.USBError as exc:
+        raise RuntimeError(
+            f"FT601 set_configuration failed ({exc}). {_LIBUSB_HINT}"
+        ) from exc
+
+
+def _claim_interface(dev, intf_num: int) -> None:
+    try:
+        if bool(dev.is_kernel_driver_active(intf_num)):
+            dev.detach_kernel_driver(intf_num)
+    except (NotImplementedError, ValueError, usb.core.USBError):
+        pass
+    try:
+        usb.util.claim_interface(dev, intf_num)
+    except usb.core.USBError as exc:
+        raise RuntimeError(
+            f"could not claim FT601 interface {intf_num} (MI_00): {exc}. "
+            + _LIBUSB_HINT
+        ) from exc
+
+
+def _bulk_pair(intf):
+    ep_out = ep_in = None
+    for ep in intf:
+        if usb.util.endpoint_type(ep.bmAttributes) != usb.util.ENDPOINT_TYPE_BULK:
+            continue
+        direction = usb.util.endpoint_direction(ep.bEndpointAddress)
+        if direction == usb.util.ENDPOINT_OUT and ep_out is None:
+            ep_out = ep
+        elif direction == usb.util.ENDPOINT_IN and ep_in is None:
+            ep_in = ep
+    return ep_out, ep_in
+
+
+def _select_bulk_interface(dev, intf_num: int):
+    cfg = dev.get_active_configuration()
+    matches = []
+    for intf in cfg:
+        if intf.bInterfaceNumber != intf_num:
+            continue
+        ep_out, ep_in = _bulk_pair(intf)
+        if ep_out is not None and ep_in is not None:
+            matches.append((intf, ep_out, ep_in))
+    if not matches:
+        raise RuntimeError(
+            f"FT601 has no bulk IN+OUT pair on interface {intf_num} (MI_00)"
+        )
+    intf, ep_out, ep_in = matches[0]
+    if intf.bAlternateSetting:
+        try:
+            dev.set_interface_altsetting(
+                interface=intf_num,
+                alternate_setting=intf.bAlternateSetting,
+            )
+        except usb.core.USBError:
+            pass
+    return intf, ep_out, ep_in
+
+
 class FT601Client:
     """
-    Thin wrapper around pyftdi's FT601 (VID 0x0403, PID 0x601F).
+    WinUSB/libusb bulk FIFO client for FT601 (VID 0x0403, PID 0x601F).
 
-    The FT601 is a SuperSpeed FIFO device, not a UART — pyftdi talks to it
-    through its libusb backend. Open with .open() / close with .close() /
-    or use as a context manager.
+    Claims interface 0 (MI_00), discovers the bulk OUT + bulk IN endpoints,
+    and uses those for framed MAGIC I/O. Not a UART; do not open via
+    pyftdi / ftdi://.
 
     Usage:
         with FT601Client() as dev:
@@ -169,35 +309,74 @@ class FT601Client:
     DEFAULT_PID = 0x601F
     READ_CHUNK  = 4096      # bytes per bulk-in read
     IO_TIMEOUT  = 1.0       # seconds
+    INTERFACE   = _FT601_INTERFACE
 
     def __init__(self, vid: int = DEFAULT_VID, pid: int = DEFAULT_PID,
                  index: int = 0):
-        if not _HAVE_PYFTDI:
-            raise RuntimeError(
-                "pyftdi is not installed. pip install pyftdi; and install a "
-                "libusb-1.0 backend (on Windows, use Zadig to bind WinUSB to "
-                "the FT601 device)."
-            )
         self._vid    = vid
         self._pid    = pid
         self._index  = index
-        self._ftdi: Optional[Ftdi] = None
+        self._dev    = None
+        self._ep_out: Optional[int] = None
+        self._ep_in: Optional[int] = None
+        self._intf_num: Optional[int] = None
+
+    @property
+    def is_open(self) -> bool:
+        return self._dev is not None
+
+    @property
+    def _timeout_ms(self) -> int:
+        return max(1, int(self.IO_TIMEOUT * 1000))
 
     # ------------------------- lifecycle --------------------------
     def open(self) -> "FT601Client":
-        self._ftdi = Ftdi()
-        url = f"ftdi://0x{self._vid:04x}:0x{self._pid:04x}/{self._index + 1}"
-        self._ftdi.open_from_url(url)
-        # FT601 synchronous FIFO; no UART-style line settings apply.
+        if self._dev is not None:
+            return self
+        dev = _find_ft601(self._vid, self._pid, self._index)
+        try:
+            _configure_ft601(dev)
+            _claim_interface(dev, self.INTERFACE)
+            _intf, ep_out, ep_in = _select_bulk_interface(dev, self.INTERFACE)
+        except Exception:
+            if _HAVE_PYUSB:
+                try:
+                    usb.util.release_interface(dev, self.INTERFACE)
+                except Exception:
+                    pass
+                try:
+                    usb.util.dispose_resources(dev)
+                except Exception:
+                    pass
+            raise
+        self._dev = dev
+        self._ep_out = int(ep_out.bEndpointAddress)
+        self._ep_in = int(ep_in.bEndpointAddress)
+        self._intf_num = int(_intf.bInterfaceNumber)
         return self
 
     def close(self) -> None:
-        if self._ftdi is not None:
-            self._ftdi.close()
-            self._ftdi = None
+        dev = self._dev
+        intf_num = self._intf_num
+        self._dev = None
+        self._ep_out = None
+        self._ep_in = None
+        self._intf_num = None
+        if dev is None:
+            return
+        if _HAVE_PYUSB:
+            try:
+                if intf_num is not None:
+                    usb.util.release_interface(dev, intf_num)
+            except Exception:
+                pass
+            try:
+                usb.util.dispose_resources(dev)
+            except Exception:
+                pass
 
     def __enter__(self) -> "FT601Client":
-        if self._ftdi is None:
+        if self._dev is None:
             return self.open()
         return self
 
@@ -206,17 +385,45 @@ class FT601Client:
 
     # ------------------------- raw I/O ---------------------------
     def _write_raw(self, blob: bytes) -> int:
-        assert self._ftdi is not None, "device not open"
-        return self._ftdi.write_data(blob)
+        if self._dev is None or self._ep_out is None:
+            raise IOError("device not open")
+        if not blob:
+            return 0
+        timeout = self._timeout_ms
+        written = 0
+        view = memoryview(blob)
+        while written < len(blob):
+            try:
+                n = int(self._dev.write(self._ep_out, view[written:], timeout))
+            except Exception as exc:
+                if _is_usb_timeout(exc):
+                    if written:
+                        break
+                    raise TimeoutError("FT601 bulk OUT timeout") from exc
+                raise
+            if n <= 0:
+                break
+            written += n
+        return written
 
     def _read_raw(self, nbytes: int) -> bytes:
-        assert self._ftdi is not None, "device not open"
+        if self._dev is None or self._ep_in is None:
+            raise IOError("device not open")
+        if nbytes <= 0:
+            return b""
+        timeout = self._timeout_ms
         buf = bytearray()
         while len(buf) < nbytes:
-            chunk = self._ftdi.read_data(min(self.READ_CHUNK, nbytes - len(buf)))
+            want = min(self.READ_CHUNK, nbytes - len(buf))
+            try:
+                chunk = self._dev.read(self._ep_in, want, timeout)
+            except Exception as exc:
+                if _is_usb_timeout(exc):
+                    break  # short read: return what we have
+                raise
             if not chunk:
                 break
-            buf.extend(chunk)
+            buf.extend(bytes(chunk))
         return bytes(buf)
 
     # ------------------------- framing ---------------------------
@@ -370,7 +577,10 @@ class LeechCoreAdapter:
             "protocol": "magic-5AA5C33C",
             "pcileech_fpga_tlp_stream": False,
             "usb_id": "0403:601F",
-            "usb": _usb_present(),
+            "usb": bool(
+                (self._client is not None and self._client.is_open)
+                or _usb_present()
+            ),
             "vid": DONOR_VID,
             "did": DONOR_DID,
             "rev": DONOR_REV,
@@ -428,10 +638,17 @@ class LeechCoreAdapter:
 
 
 def _usb_present(vid: int = 0x0403, pid: int = 0x601F) -> bool:
-    if not _HAVE_PYFTDI:
+    """True if pyusb can enumerate at least one 0403:601F (find_all)."""
+    if not _HAVE_PYUSB:
         return False
     try:
-        return bool(UsbTools.find_all([(vid, pid)]))
+        backend = usb.backend.libusb1.get_backend()
+        if backend is None:
+            return False
+        found = list(usb.core.find(
+            find_all=True, idVendor=vid, idProduct=pid, backend=backend,
+        ))
+        return bool(found)
     except Exception:
         return False
 
@@ -544,6 +761,108 @@ def _selftest() -> None:
     assert ((ping_words[1] >> 24) & 0xFF) == _FORWARD[Opcode.KEEPALIVE]
     assert (ping_words[1] & 0xFFFF) == 0
 
+    # Mock WinUSB bulk: ping must actually write MAGIC+KEEPALIVE (no hardware).
+    class _FakeUsbDev:
+        def __init__(self, rx: bytes = b""):
+            self.tx = bytearray()
+            self.rx = bytearray(rx)
+            self.timeouts_left = 0
+
+        def write(self, _ep, data, timeout=None):
+            blob = bytes(data)
+            self.tx.extend(blob)
+            return len(blob)
+
+        def read(self, _ep, size, timeout=None):
+            if self.timeouts_left > 0:
+                self.timeouts_left -= 1
+                raise TimeoutError("USB timeout")
+            n = min(int(size), len(self.rx))
+            chunk = bytes(self.rx[:n])
+            del self.rx[:n]
+            return chunk
+
+    ack = Frame(opcode=Opcode.KEEPALIVE, flags=0, address=0, payload=[],
+                req_length_dw=0)
+    fake = _FakeUsbDev(rx=ack.to_bytes())
+    loop = FT601Client()
+    loop._dev = fake
+    loop._ep_out = 0x02
+    loop._ep_in = 0x81
+    loop._intf_num = 0
+    got = loop.ping()
+    assert bytes(fake.tx) == ping.to_bytes()
+    assert got.opcode == Opcode.KEEPALIVE
+    # short-read / timeout handling
+    fake.rx.extend(b"\x11\x22")
+    assert loop._read_raw(8) == b"\x11\x22"
+    fake.timeouts_left = 1
+    assert loop._read_raw(4) == b""
+    loop.close()
+    assert loop._dev is None
+    assert "libusb-1.0.dll" in _LIBUSB_HINT
+    assert "WinUSB" in _LIBUSB_HINT
+    assert "ftdi://" not in _LIBUSB_HINT
+
+    # open() claims MI_00 and binds bulk endpoints (mocked; no USB hardware).
+    class _Ep:
+        def __init__(self, addr: int):
+            self.bEndpointAddress = addr
+
+    class _Intf:
+        bInterfaceNumber = 0
+        bAlternateSetting = 0
+
+    sentinel = _FakeUsbDev()
+    calls: list = []
+
+    def fake_find(vid, pid, index=0):
+        calls.append(("find", vid, pid, index))
+        return sentinel
+
+    def fake_cfg(dev):
+        calls.append(("cfg", dev))
+
+    def fake_claim(dev, n):
+        calls.append(("claim", n))
+
+    def fake_sel(dev, n):
+        calls.append(("sel", n))
+        return _Intf(), _Ep(0x02), _Ep(0x81)
+
+    g = globals()
+    orig_fns = {k: g[k] for k in (
+        "_find_ft601", "_configure_ft601", "_claim_interface",
+        "_select_bulk_interface",
+    )}
+    try:
+        g["_find_ft601"] = fake_find
+        g["_configure_ft601"] = fake_cfg
+        g["_claim_interface"] = fake_claim
+        g["_select_bulk_interface"] = fake_sel
+        opened = FT601Client().open()
+        assert opened._dev is sentinel
+        assert opened._ep_out == 0x02 and opened._ep_in == 0x81
+        assert opened._intf_num == 0
+        assert ("claim", 0) in calls
+        assert calls[0][0] == "find"
+        opened.close()
+    finally:
+        g.update(orig_fns)
+
+    orig_have = g["_HAVE_PYUSB"]
+    g["_HAVE_PYUSB"] = False
+    try:
+        try:
+            _libusb_backend()
+            raise AssertionError("expected RuntimeError when pyusb is missing")
+        except RuntimeError as exc:
+            msg = str(exc)
+            assert "libusb-1.0.dll" in msg and "WinUSB" in msg
+            assert "ftdi://" not in msg
+    finally:
+        g["_HAVE_PYUSB"] = orig_have
+
     ident_sv = _identity_from_rtl()
     if ident_sv is not None:
         assert ident_sv["vid"] == DONOR_VID
@@ -558,10 +877,7 @@ def _open_or_die() -> FT601Client:
     try:
         return FT601Client().open()
     except Exception as exc:
-        raise SystemExit(
-            f"FT601 0403:601f not found ({exc}). "
-            "Check lsusb, WinUSB/Zadig on Windows, udev on Linux."
-        ) from exc
+        raise SystemExit(f"FT601 0403:601f open failed ({exc})") from exc
 
 
 if __name__ == "__main__":
@@ -570,7 +886,7 @@ if __name__ == "__main__":
     ap.add_argument("--selftest", action="store_true",
                     help="run offline bijection + frame round-trip")
     ap.add_argument("--ping", action="store_true",
-                    help="open FT601, send KEEPALIVE, print response")
+                    help="open 0403:601F WinUSB bulk, write KEEPALIVE, print ACK")
     ap.add_argument("--read", type=lambda x: int(x, 0),
                     help="read one DW from the given address and print")
     ap.add_argument("--write", nargs=2, type=lambda x: int(x, 0),

@@ -5,16 +5,16 @@ Python driver that speaks the FT601 framed protocol used by `pcie_custom_endpoin
 ## Install
 
 ```
-pip install pyftdi
+pip install pyusb
 ```
 
-On Windows you also need a libusb-1.0 backend bound to the FT601:
-run [Zadig](https://zadig.akeo.ie/) and bind **WinUSB** to the FT601 interface
-(`VID 0x0403`, `PID 0x601F`). The bundled FTDI D3XX driver is a separate
-Windows kernel driver and does not work with `pyftdi`; pick one or the other.
+The FT601 is a SuperSpeed FIFO (`0403:601F`), not an FT232 UART. The host
+opens it with pyusb bulk transfers on **interface 0 (MI_00)**.
 
-On Linux, add a udev rule granting access to `0403:601f` and `plugdev`-group
-your user, or run with `sudo`.
+On Windows: bind **WinUSB** to `VID 0x0403`, `PID 0x601F`, **MI_00** with
+[Zadig](https://zadig.akeo.ie/), and put `libusb-1.0.dll` on PATH (or next
+to `python.exe`). On Linux, install `libusb-1.0` and add a udev rule for
+`0403:601f` (or run in the `plugdev` group / with `sudo`).
 
 ## Use
 
@@ -25,7 +25,10 @@ frame round-trip:
 python ft601_client.py --selftest
 ```
 
-On the laptop USB-connected to the 35T (`lsusb` shows `0403:601f`):
+On the laptop USB-connected to the 35T (`lsusb` shows `0403:601f`).
+`--identify` sets `usb: true` when pyusb finds `0403:601F` (and tries to
+open MI_00). `--ping` bulk-writes MAGIC+KEEPALIVE on the WinUSB bulk OUT
+endpoint and waits for an ACK — not `ftdi://`.
 
 ```
 python3 ft601_client.py --selftest
