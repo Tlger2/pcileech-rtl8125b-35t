@@ -10,6 +10,8 @@ module tb_bar_completion;
     logic rx_valid = 0, rx_last = 0;
     logic [15:0] completer_id = 16'h0200;
 
+    logic ft601_sample_clk = 0;
+    always @(ft601_clk) ft601_sample_clk <= #5 ft601_clk;
     pcie_custom_endpoint_top dut (
         .user_clk(user_clk), .user_reset(user_reset), .user_lnk_up(1'b1),
         .s_axis_tx_tdata(tx_data), .s_axis_tx_tkeep(tx_keep),
@@ -24,6 +26,7 @@ module tb_bar_completion;
         .cfg_interrupt_assert(), .cfg_interrupt_di(),
         .cfg_interrupt_msienable(1'b0), .cfg_interrupt_mmenable(3'b0),
         .ft601_clk(ft601_clk), .ft601_rst_n(!user_reset), .ft601_rxf_n(1'b1),
+        .ft601_sample_clk(ft601_sample_clk),
         .ft601_oe_n(), .ft601_rd_n(), .ft601_wr_n(), .ft601_txe_n(1'b1),
         .ft601_data(), .ft601_be()
     );
