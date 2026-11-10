@@ -64,13 +64,30 @@ if {[file isdirectory $xdc_dir]} {
 
 # ---------------------------------------------------------------------------
 # 4. Configure pcie_7x_0 IP
-#    RTL8125B 2.5GbE NIC identity, x1 Gen2, BAR0=64KB 64-bit, cfg_ext ON
+#    Donor RTL8125B rev 05: I/O 256 + MEM64 64K npref + MEM64 16K npref,
+#    MSI 1-vector maskable 64-bit, MSI-X 32 vec BAR4, DSN/AER/VC.
+#    Property names verified against Vivado 2026.1 pcie_7x 3.3:
+#      AER_CAP_ON → AER_Enabled, DSN_CAP_ON → DSN_Enabled,
+#      MSI_CAP_ON → MSI_Enabled, MSIX_CAP_ON → MSIx_Enabled,
+#      VC_CAP_ON → VC_Cap_Enabled, cfg_ext_en → EXT_PCI_CFG_Space
+#    Optional cap-pointer names (PM_BASE_PTR / MSI_BASE_PTR / PCIE_BASE_PTR)
+#    are applied only when the core exposes them.
 # ---------------------------------------------------------------------------
-# Check if IP already exists
+proc ip_has_cfg {ip name} {
+    return [expr {[lsearch -exact [list_property $ip] CONFIG.$name] >= 0}]
+}
+proc ip_try_set {ip name value} {
+    if {[ip_has_cfg $ip $name]} {
+        set_property CONFIG.$name $value $ip
+        puts "INFO: CONFIG.$name = $value"
+        return 1
+    }
+    puts "WARN: CONFIG.$name not in this pcie_7x; skipped"
+    return 0
+}
+
 set ip_exists [get_ips -quiet pcie_7x_0]
 if {[llength $ip_exists] == 0} {
-    # Find pcie_7x_0 — try glob first (works across versions), then filter
-    # IP name is "pcie_7x"; module_name "pcie_7x_0" is the instance name RTL references
     set avail [get_ipdefs "xilinx.com:ip:pcie_7x:*" -quiet]
     if {[llength $avail] == 0} {
         error "pcie_7x IP not found in catalog — check Vivado installation"
@@ -79,52 +96,120 @@ if {[llength $ip_exists] == 0} {
     puts "INFO: using pcie_7x version $ip_ver"
     create_ip -name pcie_7x -vendor xilinx.com -library ip \
               -version $ip_ver -module_name pcie_7x_0
-
-    # Property names verified against Vivado 2026.1 pcie_7x 3.3 property dump
-    # Key renames from older Vivado:
-    #   AER_CAP_ON   → AER_Enabled
-    #   DSN_CAP_ON   → DSN_Enabled
-    #   MSI_CAP_ON   → MSI_Enabled
-    #   MSIX_CAP_ON  → MSIx_Enabled
-    #   VC_CAP_ON    → VC_Cap_Enabled
-    #   cfg_ext_en   → EXT_PCI_CFG_Space  (enables ECAP forwarding to user logic)
-    #   Class_Code   → removed (derived from Base_Class_Menu + Sub_Class_Interface_Menu)
-    #   Max_Link_Width → removed (use Maximum_Link_Width only)
-    set_property -dict [list \
-        CONFIG.Bar0_Scale               {Kilobytes} \
-        CONFIG.Bar0_Size                {64} \
-        CONFIG.Bar0_64bit               {true} \
-        CONFIG.Bar0_Prefetchable        {true} \
-        CONFIG.Bar1_Enabled             {false} \
-        CONFIG.Bar2_Enabled             {false} \
-        CONFIG.Bar3_Enabled             {false} \
-        CONFIG.Bar4_Enabled             {false} \
-        CONFIG.Bar5_Enabled             {false} \
-        CONFIG.Vendor_ID                {10EC} \
-        CONFIG.Device_ID                {8125} \
-        CONFIG.Revision_ID              {36} \
-        CONFIG.Subsystem_Vendor_ID      {10EC} \
-        CONFIG.Subsystem_ID             {0123} \
-        CONFIG.Base_Class_Menu          {Network_controller} \
-        CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
-        CONFIG.Link_Speed               {5.0_GT/s} \
-        CONFIG.Maximum_Link_Width       {X1} \
-        CONFIG.Max_Payload_Size         {256_bytes} \
-        CONFIG.Extended_Tag_Field       {false} \
-        CONFIG.AER_Enabled              {true} \
-        CONFIG.VC_Cap_Enabled           {false} \
-        CONFIG.DSN_Enabled              {true} \
-        CONFIG.MSIx_Enabled             {false} \
-        CONFIG.MSI_Enabled              {true} \
-        CONFIG.PCIe_Blk_Locn            {X0Y0} \
-        CONFIG.EXT_PCI_CFG_Space        {true} \
-    ] [get_ips pcie_7x_0]
-
-    generate_target all [get_ips pcie_7x_0]
-    puts "INFO: pcie_7x_0 IP created and targets generated"
 } else {
-    puts "INFO: pcie_7x_0 IP already exists, skipping creation"
+    puts "INFO: pcie_7x_0 IP already exists; re-applying donor CONFIG"
 }
+
+set core [get_ips pcie_7x_0]
+set_property -dict [list \
+    CONFIG.Vendor_ID                {10EC} \
+    CONFIG.Device_ID                {8125} \
+    CONFIG.Revision_ID              {05} \
+    CONFIG.Subsystem_Vendor_ID      {10EC} \
+    CONFIG.Subsystem_ID             {0123} \
+    CONFIG.Base_Class_Menu          {Network_controller} \
+    CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
+    CONFIG.Link_Speed               {5.0_GT/s} \
+    CONFIG.Maximum_Link_Width       {X1} \
+    CONFIG.Max_Payload_Size         {256_bytes} \
+    CONFIG.Extended_Tag_Field       {false} \
+    CONFIG.AER_Enabled              {true} \
+    CONFIG.DSN_Enabled              {true} \
+    CONFIG.MSIx_Enabled             {true} \
+    CONFIG.MSI_Enabled              {true} \
+    CONFIG.PCIe_Blk_Locn            {X0Y0} \
+    CONFIG.EXT_PCI_CFG_Space        {true} \
+] $core
+
+# BAR0: I/O 256 B. BAR2: 64-bit npref 64 KB MAC. BAR4: 64-bit npref 16 KB MSI-X.
+ip_try_set $core Bar0_Enabled      true
+ip_try_set $core Bar0_Type         IO
+ip_try_set $core Bar0_64bit        false
+ip_try_set $core Bar0_Prefetchable false
+ip_try_set $core Bar0_Scale        Bytes
+ip_try_set $core Bar0_Size         256
+ip_try_set $core Bar1_Enabled      false
+ip_try_set $core Bar2_Enabled      true
+ip_try_set $core Bar2_Type         Memory
+ip_try_set $core Bar2_64bit        true
+ip_try_set $core Bar2_Prefetchable false
+ip_try_set $core Bar2_Scale        Kilobytes
+ip_try_set $core Bar2_Size         64
+ip_try_set $core Bar3_Enabled      false
+ip_try_set $core Bar4_Enabled      true
+ip_try_set $core Bar4_Type         Memory
+ip_try_set $core Bar4_64bit        true
+ip_try_set $core Bar4_Prefetchable false
+ip_try_set $core Bar4_Scale        Kilobytes
+ip_try_set $core Bar4_Size         16
+ip_try_set $core Bar5_Enabled      false
+ip_try_set $core Expansion_Rom_Enabled false
+
+# Cap pointers: PM 0x40, MSI 0x50, PCIe 0x70, MSI-X 0xB0. DSN at 0x168.
+foreach {n v} {
+    PM_BASE_PTR            40
+    MSI_BASE_PTR           50
+    PCIE_BASE_PTR          70
+    MSIX_BASE_PTR          B0
+    PM_Cap_Nextptr         50
+    MSI_Cap_Nextptr        70
+    PCIE_Cap_Nextptr       B0
+    DSN_BASE_PTR           168
+    DSN_Cap_Nextptr        178
+    VC_Cap_Enabled         true
+} {
+    ip_try_set $core $n $v
+}
+
+# MSI: 1 vector, 64-bit, maskable.
+foreach {n v} {
+    MSI_64_bit               true
+    MSI_Capable_Maskable     true
+    MSI_Vector_Width         1_vector
+    Multiple_Message_Capable 1_vector
+} {
+    ip_try_set $core $n $v
+}
+
+# MSI-X: 32 vectors, BAR4, table byte 0, PBA byte 0x800.
+# Table Size is a count on some cores and N-1 (0x1F) on others; BIR is
+# either BAR_4:5 or integer 4.
+if {![ip_try_set $core MSIx_Table_Size 32]} {
+    ip_try_set $core MSIx_Table_Size 1F
+}
+if {![ip_try_set $core MSIx_Table_BIR BAR_4:5]} {
+    ip_try_set $core MSIx_Table_BIR 4
+}
+ip_try_set $core MSIx_Table_Offset 00000000
+if {![ip_try_set $core MSIx_PBA_BIR BAR_4:5]} {
+    ip_try_set $core MSIx_PBA_BIR 4
+}
+if {![ip_try_set $core MSIx_PBA_Offset 00000800]} {
+    ip_try_set $core MSIx_PBA_Offset 800
+}
+
+# PM / PCIe device+link: D1+D2, Aux 375mA, ASPM L0s+L1, ClockPM, RBE, LTR.
+foreach {n v} {
+    D1_Support             true
+    D2_Support             true
+    PME_Support_D0         true
+    PME_Support_D1         true
+    PME_Support_D2         true
+    PME_Support_D3hot      true
+    PME_Support_D3cold     true
+    No_Soft_Reset          true
+    Aux_Current            375_mA
+    ASPM_Support           L0s_L1_Supported
+    Enable_Slot_Clock_Cfg  true
+    Clock_PM               true
+    Role_Based_Error_Reporting true
+    DevCap2_LTR            true
+} {
+    ip_try_set $core $n $v
+}
+
+generate_target all $core
+puts "INFO: pcie_7x_0 donor CONFIG applied and targets generated"
 
 # ---------------------------------------------------------------------------
 # 5. Use the IP's internal PIPE clock generator; the wrapper has no external

@@ -1,5 +1,5 @@
 // PCI Power Management Capability — enumeration stub (read-only).
-// Satisfies capability-walking OS drivers during enumeration.
+// Donor PMC: D1+ D2+ Aux=375mA PME(D0..D3cold) NoSoftRst+.
 
 module pci_cap_pm_stub #(
     parameter logic [7:0] NEXT_PTR = 8'h50
@@ -12,8 +12,8 @@ module pci_cap_pm_stub #(
     output logic [31:0] cap_rdata
 );
     localparam logic [7:0]  CAP_ID = 8'h01;
-    localparam logic [15:0] PMC    = 16'h0003;
-    localparam logic [15:0] PMCSR  = 16'h0008;
+    localparam logic [15:0] PMC    = 16'hFFC3;
+    localparam logic [15:0] PMCSR  = 16'h0008;  // NoSoftRst, D0
     localparam logic [7:0]  BSE    = 8'h00;
     localparam logic [7:0]  DATA   = 8'h00;
 
