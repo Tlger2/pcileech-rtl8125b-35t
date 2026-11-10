@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { paintTerrainCanvas, type Terrain } from "./mapgen";
 import {
   basemapUrls,
+  isAllowedBasemapSrc,
   visibleMeters,
   worldToScreen,
   type RadarView,
@@ -149,8 +150,12 @@ export function RadarCanvas({
       img.crossOrigin = "anonymous";
       let i = 0;
       const tryNext = () => {
-        if (i >= urls.length) return;
-        img.src = urls[i++];
+        while (i < urls.length) {
+          const next = urls[i++];
+          if (!isAllowedBasemapSrc(next)) continue;
+          img.src = next;
+          return;
+        }
       };
       img.onload = () => {
         if (baseKey === key) baseImg = img;

@@ -97,12 +97,28 @@ export function snapshotWorldSize(raw: Record<string, unknown>, fallback: number
   return fallback;
 }
 
+/** Same-origin and loopback map endpoints. Snapshot JSON must not supply other URLs. */
+const LOCAL_BASEMAP_URLS = [
+  "/api/map",
+  "http://127.0.0.1:1738/map",
+  "http://127.0.0.1:8080/map",
+] as const;
+
+/** True for allowlisted map endpoints or locally generated raster data: URLs. */
+export function isAllowedBasemapSrc(url: string): boolean {
+  if ((LOCAL_BASEMAP_URLS as readonly string[]).includes(url)) return true;
+  return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url);
+}
+
+/**
+ * Overlay sources for the radar canvas.
+ * Snapshot `map_image_path` is never used as an image URL: remote, file:, javascript:,
+ * and arbitrary data: values from JSON are dropped. The Python bridge serves the file.
+ */
 export function basemapUrls(path: string | null | undefined): string[] {
-  const urls = [
-    "/api/map",
-    "http://127.0.0.1:1738/map",
-    "http://127.0.0.1:8080/map",
-  ];
-  if (path && /^(https?:|data:|blob:|\/)/i.test(path)) urls.unshift(path);
+  const urls = [...LOCAL_BASEMAP_URLS];
+  if (path && (LOCAL_BASEMAP_URLS as readonly string[]).includes(path)) {
+    return [path, ...urls.filter((u) => u !== path)];
+  }
   return urls;
 }
