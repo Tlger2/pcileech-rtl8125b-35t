@@ -12,7 +12,7 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 - Host `ft601_client.py` offline self-test passes (opcode bijection + frame round-trip).
 - Remaining for closer 1:1 spoof: wire actual MemWr payload into `rtl8125b_bar0_regs` (currently hard-wired to 0), re-enable shadow RAM, and drive MSI from the BAR0 irq pulse. These do not require the card to implement.
 - Hardware bring-up (pinout, timing, full endpoint) still open.
-- Web radar (AtomicDMA-style): [`radar-web/`](radar-web/) — `npm run dev` → http://127.0.0.1:5173
+- Web radar (Never Banned overlay): [`radar-web/`](radar-web/) — `npm run dev` → http://127.0.0.1:5173
 
 ## Modules
 

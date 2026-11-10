@@ -1,6 +1,8 @@
-# AtomicDMA — Rust radar (web)
+# Never Banned — Rust radar (web)
 
-Read-only web radar matching the AtomicDMA overlay: satellite island, loot filter, ESP widget, DMA panel, chams, and visual ESP. Write-memory cheats (aim assist, recoil, eoka, spiderman, jump-shoot, memory features) are not included. DMA is snapshot ingest / FT601 identify-read only.
+> “in the end you are never truly banned” — Hellon Wong
+
+Read-only web radar matching the attached overlay: satellite island, loot filter, ESP widget, DMA panel, chams, and visual ESP. Write-memory cheats (aim assist, recoil, eoka, spiderman, jump-shoot, memory features) are not included. DMA is snapshot ingest / FT601 identify-read only.
 
 ## Run
 

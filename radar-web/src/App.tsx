@@ -209,7 +209,13 @@ export function App() {
   return (
     <div className="app">
       <header className="titlebar">
-        <b>AtomicDMA - Rust</b>
+        <div className="brand">
+          <b>Never Banned - Rust</b>
+          <span className="quote-row">
+            <span className="quote">“in the end you are never truly banned”</span>
+            <span className="byline">— Hellon Wong</span>
+          </span>
+        </div>
         <span className="fps">
           {fps.toFixed(1)} FPS {snap.frameMs.toFixed(1)}ms
         </span>

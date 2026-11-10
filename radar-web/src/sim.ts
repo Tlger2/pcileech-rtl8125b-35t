@@ -473,7 +473,7 @@ export function defaultSettings(): AppSettings {
 export function loadSettings(): AppSettings {
   const base = defaultSettings();
   try {
-    const raw = localStorage.getItem("atomicdma-settings");
+    const raw = localStorage.getItem("never-banned-settings");
     if (!raw) return base;
     const parsed = JSON.parse(raw) as Partial<AppSettings> & { hacks?: Partial<AppSettings["hacks"]> };
     return {
@@ -494,7 +494,7 @@ export function loadSettings(): AppSettings {
 }
 
 export function saveSettings(s: AppSettings): void {
-  localStorage.setItem("atomicdma-settings", JSON.stringify(s));
+  localStorage.setItem("never-banned-settings", JSON.stringify(s));
 }
 
 export function passesFilter(e: Entity, settings: AppSettings): boolean {

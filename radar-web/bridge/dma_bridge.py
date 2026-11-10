@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only DMA / snapshot bridge for the AtomicDMA web radar.
+"""Read-only DMA / snapshot bridge for the Never Banned web radar.
 
 Serves:
   GET  /state  — ReaderRadar-compatible snapshot (or last ingest)
@@ -173,7 +173,7 @@ def main() -> None:
     _try_ft601()
     threading.Thread(target=_watch, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"atomic dma bridge http://127.0.0.1:{PORT}/state  snapshot={SNAPSHOT} (read-only)")
+    print(f"never-banned bridge http://127.0.0.1:{PORT}/state  snapshot={SNAPSHOT} (read-only)")
     httpd.serve_forever()
 
 
