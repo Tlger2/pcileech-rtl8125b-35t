@@ -308,7 +308,11 @@ export class WorldSim {
       this.size = newSize;
       this.terrain = generateTerrain(newSize, this.seed, 512);
     }
-    this.provider = "snapshot";
+    const nextProvider = raw.provider;
+    this.provider =
+      nextProvider === "memprocfs" || nextProvider === "ft601" || nextProvider === "snapshot"
+        ? nextProvider
+        : "snapshot";
     this.dmaConnected = true;
     this.mapImagePath = snapshotMapImagePath(raw);
     const lp = raw.local_player as

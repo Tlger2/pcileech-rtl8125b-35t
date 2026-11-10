@@ -2,9 +2,9 @@
 
 > “in the end you are never truly banned” — Hellon Wong
 
-Read-only web radar matching the attached overlay: satellite island, loot filter, ESP widget, DMA panel, chams, and visual ESP. Write-memory cheats (aim assist, recoil, eoka, spiderman, jump-shoot, memory features) are not included. DMA is snapshot ingest / FT601 identify-read only.
+Read-only web radar: satellite island, loot filter, ESP widget, DMA panel, chams, visual ESP. Write-memory cheats are not included. DMA is snapshot ingest / FT601 identify-read only.
 
-## Run
+## Run (SIM)
 
 ```bash
 cd radar-web
@@ -12,24 +12,62 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 — starts on a live **SIM** world (seed 1337, size 4000). On join / Reload Map, the view centers on you at in-game map scale. Interactive camera then lets you pan.
+Open http://127.0.0.1:5173 — live **SIM** world until Connect DMA succeeds. Insert opens the menu. Set **DMA source** (default `http://127.0.0.1:1738/state`, saved in localStorage) if the bridge is on another port.
 
-## DMA at home
+## Two-PC (laptop runbook)
 
-1. Flash the 35T firmware (PR on `cursor/rtl8125b-eac-hide-1fc4`).
-2. Run ReaderRadar `rust_snapshot.py` **or** this read-only bridge:
+Game PC: card in PCIe, Windows, `RustClient.exe`. Laptop: USB3 to FT601 (`VID 0403 PID 601F`). This cloud VM is not the laptop and has no FT601.
+
+1. On the laptop, pull this radar branch:
+
+```bash
+git fetch origin
+git checkout cursor/atomic-rust-radar-ui-1fc4
+git pull origin cursor/atomic-rust-radar-ui-1fc4
+```
+
+2. Windows laptop: Zadig → bind **WinUSB** to FT601 (`VID 0403 PID 601F`).
+
+3. USB attached to the **laptop**:
+
+```bash
+pip install pyftdi
+python host/ft601_client.py --selftest
+python host/ft601_client.py --identify
+```
+
+`--identify` must show `"usb": true`. `"magic_ok": true` means this repo’s MAGIC `0x5AA5C33C` bitstream answered. `"magic_ok": false` with USB present is normal on **stock CaptainDMA** firmware.
+
+4. ReaderRadar / MemProcFS on the laptop (stock `fpga` firmware):
+
+```text
+MEMPROCFS_DIR=<MemProcFS>
+VMM_DEVICE=fpga
+```
+
+Run `rust_snapshot.py` against `RustClient.exe` on the game PC. Snapshot path defaults to `%TEMP%/ReaderRadar-Rust-live.json` (override with `SNAPSHOT_PATH`).
+
+5. Bridge + radar on the laptop:
 
 ```bash
 python radar-web/bridge/dma_bridge.py
+cd radar-web && npm install && npm run dev
 ```
 
-The UI **Connect DMA** button probes `http://127.0.0.1:1738/state` and `http://127.0.0.1:8080/state` (ReaderRadar). Snapshot schema is the ReaderRadar JSON (`entities[].category/position/meta`, `world_size`, optional `world.map_image_path` basemap).
+Open http://127.0.0.1:5173 → Insert → DMA source `http://127.0.0.1:1738/state` (or ReaderRadar `http://127.0.0.1:8080/state`) → **Connect DMA**. If the bridge is down, the SIM world stays. Disconnect returns to SIM.
 
-The bridge serves `GET /state`, `GET /health`, snapshot watch, optional `GET /map`, and optional FT601 identify/read. It does not POST aim angles or write process memory.
+Bridge: `GET /state`, `GET /health`, `GET /identify`, `GET /map`. Read-only. CORS is loopback-only. Map files only from the trusted maps dir (`ATOMIC_MAP_DIR`, snapshot `maps/`, or `radar-web/maps`).
 
-This bitstream speaks MAGIC `0x5AA5C33C`, not stock MemProcFS `fpga://`. Use `host/ft601_client.py --identify` plus the bridge; native `fpga://` will not identify until a TLP-stream shim exists.
+## Firmware fork (identify vs `fpga`)
 
-Offsets in `public/offsets.json` are for ReaderRadar / probe notes only — the web radar never writes them.
+This cloud environment never built a bitstream (no Vivado).
+
+| Card firmware | Laptop path |
+|---|---|
+| Stock CaptainDMA | MemProcFS `VMM_DEVICE=fpga` + `rust_snapshot.py` + this bridge/UI |
+| This repo MAGIC `0x5AA5C33C` | PR **#5** `cursor/rtl8125b-eac-hide-1fc4`. Needs a **Vivado flash on the 35T**. Then `host/ft601_client.py --identify` (`magic_ok`). Native `fpga://` will not identify this bitstream until a TLP-stream shim exists. |
+
+Offsets in `public/offsets.json` are notes only — the web radar never writes them.
 
 ## Hotkeys
 

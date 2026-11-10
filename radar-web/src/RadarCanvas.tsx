@@ -15,6 +15,7 @@ interface Props {
   terrain: Terrain;
   settings: AppSettings;
   view: RadarView;
+  dmaSourceUrl?: string;
   onView: (v: RadarView) => void;
   onHover: (e: Entity | null, sx: number, sy: number) => void;
   onClickEntity: (e: Entity) => void;
@@ -107,6 +108,7 @@ export function RadarCanvas({
   terrain,
   settings,
   view,
+  dmaSourceUrl,
   onView,
   onHover,
   onClickEntity,
@@ -115,9 +117,11 @@ export function RadarCanvas({
   const viewRef = useRef(view);
   const snapRef = useRef(snapshot);
   const setRef = useRef(settings);
+  const dmaUrlRef = useRef(dmaSourceUrl);
   viewRef.current = view;
   snapRef.current = snapshot;
   setRef.current = settings;
+  dmaUrlRef.current = dmaSourceUrl;
 
   useEffect(() => {
     const canvas = ref.current;
@@ -140,12 +144,13 @@ export function RadarCanvas({
 
     const ensureBasemap = (snap: WorldSnapshot) => {
       const path = snap.mapImagePath ?? null;
-      const key = path ?? "";
+      const source = dmaUrlRef.current;
+      const key = `${path ?? ""}|${source ?? ""}`;
       if (key === baseKey) return baseImg;
       baseKey = key;
       baseImg = null;
-      if (!path) return null;
-      const urls = basemapUrls(path);
+      if (!path && !snap.dmaConnected) return null;
+      const urls = basemapUrls(path, source);
       const img = new Image();
       img.crossOrigin = "anonymous";
       let i = 0;

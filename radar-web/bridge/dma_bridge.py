@@ -9,7 +9,7 @@ Serves:
 
 Ingest order:
   1. SNAPSHOT_PATH JSON from rust_snapshot.py (ReaderRadar)
-  2. Optional FT601 identify / read via host/ft601_client.py
+  2. Optional FT601 identify via host/ft601_client.py (USB + MAGIC 0x5AA5C33C)
   3. Empty state so the web UI stays on SIM
 
 Run on the reader laptop:
@@ -134,6 +134,66 @@ def _map_image_from(data: dict) -> str | None:
     return None
 
 
+def _as_dict(value: object) -> dict:
+    return value if isinstance(value, dict) else {}
+
+
+def _entity_position(entry: dict) -> dict | None:
+    pos = entry.get("position") or entry.get("pos")
+    if isinstance(pos, dict) and all(isinstance(pos.get(k), (int, float)) for k in ("x", "y", "z")):
+        return {"x": float(pos["x"]), "y": float(pos["y"]), "z": float(pos["z"])}
+    if all(isinstance(entry.get(k), (int, float)) for k in ("x", "y", "z")):
+        return {"x": float(entry["x"]), "y": float(entry["y"]), "z": float(entry["z"])}
+    return None
+
+
+def normalize_snapshot(data: dict) -> dict:
+    """Canonical ReaderRadar / rust_snapshot.py JSON for GET /state."""
+    world = _as_dict(data.get("world"))
+    lp = data.get("local_player")
+    if lp is None:
+        lp = data.get("localPlayer")
+    if lp is None:
+        lp = world.get("local_player")
+    raw_ents = data.get("entities")
+    if not isinstance(raw_ents, list):
+        raw_ents = data.get("players")
+    if not isinstance(raw_ents, list):
+        raw_ents = []
+    entities = []
+    for entry in raw_ents:
+        if not isinstance(entry, dict):
+            continue
+        pos = _entity_position(entry)
+        if pos is None:
+            continue
+        meta = _as_dict(entry.get("meta"))
+        category = entry.get("category") or entry.get("type") or "misc"
+        entities.append({
+            "category": category,
+            "position": pos,
+            "meta": {
+                "name": meta.get("name", entry.get("name", category)),
+                "health": meta.get("health", entry.get("health")),
+                "held": meta.get("held", entry.get("held")),
+                "admin": meta.get("admin", entry.get("admin")),
+            },
+        })
+    world_size = data.get("world_size")
+    if not isinstance(world_size, (int, float)) or world_size <= 0:
+        world_size = world.get("size") or world.get("world_size") or 4000
+    return {
+        "ts": data.get("ts", time.time()),
+        "world_size": int(world_size),
+        "provider": "memprocfs",
+        "dmaConnected": True,
+        "local_player": lp if isinstance(lp, dict) else None,
+        "entities": entities,
+        "map_image_path": None,
+        "world": None,
+    }
+
+
 def _load_snapshot() -> None:
     global _state, _map_path
     if not SNAPSHOT.is_file():
@@ -142,37 +202,40 @@ def _load_snapshot() -> None:
         data = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
+    if not isinstance(data, dict):
+        return
+    body = normalize_snapshot(data)
     safe = _safe_map_file(_map_image_from(data))
+    body["map_image_path"] = "/map" if safe else None
     with _lock:
-        _state = {
-            "ts": data.get("ts", time.time()),
-            "world_size": data.get("world_size", data.get("world", {}).get("size", 4000) if isinstance(data.get("world"), dict) else 4000),
-            "provider": "memprocfs",
-            "dmaConnected": True,
-            "local_player": data.get("local_player"),
-            "entities": data.get("entities", []),
-            "map_image_path": "/map" if safe else None,
-            "world": None,
-        }
+        ft = _state.get("ft601")
+        _state = body
+        if ft is not None:
+            _state["ft601"] = ft
         _map_path = safe
 
 
 def _try_ft601() -> None:
+    """USB enumerate + MAGIC identify. Does not mark the radar live (needs a snapshot)."""
+    ident = None
     try:
-        from ft601_client import FT601Client  # type: ignore
+        from ft601_client import identify as ft_identify  # type: ignore
+        ident = ft_identify()
     except Exception:
+        try:
+            from ft601_client import FT601Client  # type: ignore
+            with FT601Client() as dev:
+                ident = dev.identify() if hasattr(dev, "identify") else {"usb": True}
+        except Exception as exc:
+            ident = {
+                "usb": False,
+                "magic_ok": False,
+                "error": str(exc),
+            }
+    if ident is None:
         return
-    try:
-        with FT601Client() as dev:
-            ident = None
-            if hasattr(dev, "identify"):
-                ident = dev.identify()
-            with _lock:
-                _state["provider"] = "ft601"
-                _state["dmaConnected"] = True
-                _state["ft601"] = ident or True
-    except Exception:
-        return
+    with _lock:
+        _state["ft601"] = ident
 
 
 def _watch() -> None:
@@ -228,7 +291,22 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         if self.path.startswith("/health"):
-            self._send(200, {"ok": True, "readonly": True})
+            with _lock:
+                ft = _state.get("ft601")
+            self._send(200, {
+                "ok": True,
+                "readonly": True,
+                "port": PORT,
+                "snapshot": str(SNAPSHOT),
+                "snapshot_present": SNAPSHOT.is_file(),
+                "ft601": ft,
+            })
+            return
+        if self.path.startswith("/identify"):
+            _try_ft601()
+            with _lock:
+                ident = _state.get("ft601") or {"usb": False, "magic_ok": False}
+            self._send(200, ident)
             return
         if self.path.startswith("/state"):
             with _lock:

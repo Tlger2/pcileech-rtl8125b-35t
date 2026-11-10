@@ -99,14 +99,28 @@ export function snapshotWorldSize(raw: Record<string, unknown>, fallback: number
 
 /** Same-origin and loopback map endpoints. Snapshot JSON must not supply other URLs. */
 const LOCAL_BASEMAP_URLS = [
+  "/map",
   "/api/map",
   "http://127.0.0.1:1738/map",
   "http://127.0.0.1:8080/map",
 ] as const;
 
+function isLoopbackMapUrl(url: string): boolean {
+  if (url === "/map" || url === "/api/map") return true;
+  try {
+    const u = new URL(url);
+    const host = (u.hostname || "").toLowerCase();
+    if (u.protocol !== "http:" || (host !== "127.0.0.1" && host !== "localhost")) return false;
+    if (u.username || u.password) return false;
+    return u.pathname === "/map" || u.pathname.endsWith("/map");
+  } catch {
+    return false;
+  }
+}
+
 /** True for allowlisted map endpoints or locally generated raster data: URLs. */
 export function isAllowedBasemapSrc(url: string): boolean {
-  if ((LOCAL_BASEMAP_URLS as readonly string[]).includes(url)) return true;
+  if (isLoopbackMapUrl(url)) return true;
   return /^data:image\/(png|jpeg|jpg|webp);base64,/i.test(url);
 }
 
@@ -115,10 +129,31 @@ export function isAllowedBasemapSrc(url: string): boolean {
  * Snapshot `map_image_path` is never used as an image URL: remote, file:, javascript:,
  * and arbitrary data: values from JSON are dropped. The Python bridge serves the file.
  */
-export function basemapUrls(path: string | null | undefined): string[] {
-  const urls = [...LOCAL_BASEMAP_URLS];
-  if (path && (LOCAL_BASEMAP_URLS as readonly string[]).includes(path)) {
-    return [path, ...urls.filter((u) => u !== path)];
+export function basemapUrls(path: string | null | undefined, stateUrl?: string): string[] {
+  const derived = stateUrl
+    ? (() => {
+        try {
+          const raw = stateUrl.trim();
+          if (!raw) return null;
+          if (raw.startsWith("/")) return raw.replace(/\/state\/?$/, "/map");
+          const u = new URL(raw);
+          u.pathname = u.pathname.replace(/\/state\/?$/, "/map");
+          if (!u.pathname.endsWith("/map")) u.pathname = `${u.pathname.replace(/\/$/, "")}/map`;
+          u.search = "";
+          u.hash = "";
+          return u.toString();
+        } catch {
+          return null;
+        }
+      })()
+    : null;
+  const ordered = [derived, path, ...LOCAL_BASEMAP_URLS].filter((u): u is string => Boolean(u));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const url of ordered) {
+    if (seen.has(url) || !isAllowedBasemapSrc(url)) continue;
+    seen.add(url);
+    out.push(url);
   }
-  return urls;
+  return out;
 }

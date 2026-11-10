@@ -181,9 +181,25 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .menu {
   position: absolute;
   top: 42px; right: 10px;
-  width: 272px;
+  width: 300px;
   max-height: calc(100% - 54px);
   overflow: auto;
+}
+.url-lbl {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+.url-input {
+  width: 100%;
+  background: #152226;
+  color: var(--text);
+  border: 1px solid #2c4a4a;
+  border-radius: 3px;
+  padding: 5px 6px;
+  font-size: 11px;
+  margin-bottom: 6px;
 }
 .block { padding: 8px 10px 10px; }
 .block + .block { border-top: 1px solid rgba(255,255,255,.05); }

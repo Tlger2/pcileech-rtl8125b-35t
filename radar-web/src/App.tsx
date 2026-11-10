@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EspCanvas, RadarCanvas } from "./RadarCanvas";
-import { probeDma, pullSnapshot } from "./dma";
+import { DEFAULT_DMA_URL, loadDmaSourceUrl, probeDma, pullSnapshot, saveDmaSourceUrl } from "./dma";
 import { HELP } from "./help";
 import { joinFormatView, stageSize } from "./rustMap";
 import { loadSettings, saveSettings, WorldSim } from "./sim";
@@ -49,6 +49,9 @@ export function App() {
   });
   const [mapRev, setMapRev] = useState(0);
   const [dmaMsg, setDmaMsg] = useState("SIM world");
+  const [dmaUrl, setDmaUrl] = useState(() => loadDmaSourceUrl());
+  const dmaUrlRef = useRef(dmaUrl);
+  dmaUrlRef.current = dmaUrl;
   const joinRef = useRef({
     didSimStart: false,
     hadLiveLocal: false,
@@ -61,6 +64,7 @@ export function App() {
   }, []);
 
   useEffect(() => saveSettings(settings), [settings]);
+  useEffect(() => saveDmaSourceUrl(dmaUrl), [dmaUrl]);
 
   useEffect(() => {
     const world = simRef.current.tick(0, settingsRef.current);
@@ -104,7 +108,7 @@ export function App() {
     if (!snap.dmaConnected) return;
     const id = window.setInterval(() => {
       void (async () => {
-        const raw = await pullSnapshot();
+        const raw = await pullSnapshot(dmaUrlRef.current);
         if (!raw) return;
         const result = simRef.current.ingestSnapshot(raw);
         const world = simRef.current.tick(0, settingsRef.current);
@@ -148,12 +152,12 @@ export function App() {
       setDmaMsg("SIM world");
       return;
     }
-    const st = await probeDma();
+    const st = await probeDma(dmaUrlRef.current);
     simRef.current.dmaConnected = st.connected;
     simRef.current.provider = st.provider;
-    setDmaMsg(st.connected ? `LIVE ${st.provider}` : "SIM — no bridge on :1738/:8080");
+    setDmaMsg(st.connected ? `LIVE ${st.provider}` : st.detail);
     if (st.connected) {
-      const raw = await pullSnapshot();
+      const raw = await pullSnapshot(dmaUrlRef.current);
       if (raw) {
         const result = simRef.current.ingestSnapshot(raw);
         const world = simRef.current.tick(0, settingsRef.current);
@@ -167,7 +171,7 @@ export function App() {
 
   const reloadRadar = async () => {
     if (simRef.current.dmaConnected) {
-      const raw = await pullSnapshot();
+      const raw = await pullSnapshot(dmaUrlRef.current);
       if (raw) {
         const result = simRef.current.ingestSnapshot(raw);
         const world = simRef.current.tick(0, settingsRef.current);
@@ -245,6 +249,7 @@ export function App() {
           terrain={sim.terrain}
           settings={settings}
           view={view}
+          dmaSourceUrl={dmaUrl}
           onView={setView}
           onHover={onHover}
           onClickEntity={onClickEntity}
@@ -320,6 +325,26 @@ export function App() {
                   DMA Connection
                   <span className={`badge ${snap.dmaConnected ? "live" : "sim"}`}>{dmaMsg}</span>
                 </div>
+                <label className="url-lbl" htmlFor="dma-url">
+                  DMA source
+                </label>
+                <input
+                  id="dma-url"
+                  className="url-input"
+                  type="url"
+                  spellCheck={false}
+                  autoComplete="off"
+                  placeholder={DEFAULT_DMA_URL}
+                  value={dmaUrl}
+                  onChange={(e) => setDmaUrl(e.target.value)}
+                  onBlur={() => setDmaUrl((u) => u.trim() || DEFAULT_DMA_URL)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void connectDma(true);
+                    }
+                  }}
+                />
                 <div className="row">
                   <button className="btn green" onClick={() => void connectDma(!snap.dmaConnected)}>
                     {snap.dmaConnected ? "Disconnect DMA" : "Connect DMA"}
