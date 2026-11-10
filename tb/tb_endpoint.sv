@@ -13,6 +13,7 @@ module tb_endpoint;
 
     int errors = 0;
     int checks = 0;
+    integer phase_b_spins;
 
     // Sticky latches so a one-cycle combinational pulse on frame_done /
     // tx_done is never missed by an @(posedge …) that happens to arm after
@@ -23,6 +24,7 @@ module tb_endpoint;
     // (XSim 2026.1 enforces declare-before-use inside procedural code).
     logic frame_done_sticky = 1'b0;
     logic tx_done_sticky    = 1'b0;
+    logic bad_opcode_sticky = 1'b0;
 
     `define CHECK(cond, msg)                                               \
         begin                                                              \
@@ -143,8 +145,9 @@ module tb_endpoint;
     // Captures a one-cycle pulse on frame_done / tx_done so the test
     // sequencer can wait on it without racing against the pulse's fall.
     always @(posedge clk) begin
-        if (frame_done) frame_done_sticky = 1'b1;
-        if (tx_done)    tx_done_sticky    = 1'b1;
+        if (frame_done)     frame_done_sticky = 1'b1;
+        if (tx_done)        tx_done_sticky    = 1'b1;
+        if (bad_opcode_err) bad_opcode_sticky = 1'b1;
     end
 
     pcie_cpld_axis_tx_mux #(
@@ -358,6 +361,18 @@ module tb_endpoint;
         end
         `CHECK(last_opcode == OPC_READ, "A.2 last_opcode == OPC_READ")
 
+        begin
+            logic [31:0] q[$];
+            bad_opcode_sticky = 1'b0;
+            send_frame(OPC_RESET,      8'h00, 16'd0, 32'h0000_0000, q);
+            send_frame(OPC_FLUSH,      8'h00, 16'd0, 32'h0000_0000, q);
+            send_frame(OPC_IRQ_ENABLE, 8'h00, 16'd0, 32'h0000_0001, q);
+            send_frame(OPC_IRQ_CLEAR,  8'h00, 16'd0, 32'h0000_0001, q);
+            repeat (3) @(posedge clk);
+        end
+        `CHECK(bad_opcode_sticky == 1'b0, "A.3 RESET/FLUSH/IRQ opcodes accepted")
+        `CHECK(last_opcode == OPC_IRQ_CLEAR, "A.3 last opcode is IRQ_CLEAR")
+
         $display("\n==== PHASE B: pcie_cpld_axis_tx_mux ====");
         for (int i = 0; i < PAY_DEPTH; i++)
             payload_mem[i] = 32'hA000_0000 + i;
@@ -412,7 +427,11 @@ module tb_endpoint;
                     tx_done_sticky = 1'b0;
                 end
                 begin
-                    repeat (200) @(posedge clk);
+                    phase_b_spins = 0;
+                    while (phase_b_spins < 200) begin
+                        @(posedge clk);
+                        phase_b_spins = phase_b_spins + 1;
+                    end
                 end
             join_any
             disable fork;
@@ -518,6 +537,15 @@ module tb_endpoint;
             `CHECK(bar_hit == 1'b1, "D.3 MSE=1 + BAR0 in range -> hit")
             `CHECK(bar_idx == 2'd0, "D.3 hit on BAR0")
             `CHECK(bar_offset_lo == 16'h1234, "D.3 offset = 0x1234")
+
+            // 0x8000 is inside a 64 KiB BAR0 and outside a 16 KiB BAR0.
+            bar_tlp_addr = 64'h0000_0000_F000_8000;
+            #1;
+            `CHECK(bar_hit == 1'b1, "D.3b offset 0x8000 is inside 64KiB BAR0")
+            `CHECK(bar_offset_lo == 16'h8000, "D.3b offset low = 0x8000")
+            bar_tlp_addr = 64'h0000_0000_F001_0000;
+            #1;
+            `CHECK(bar_hit == 1'b0, "D.3c offset 0x10000 is outside 64KiB BAR0")
 
             // D.4 Out-of-range address -> no hit even with MSE=1
             bar_tlp_addr = 64'h0000_0000_E000_0000;

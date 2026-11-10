@@ -35,7 +35,7 @@ if {[file exists "$project_dir/$project_name.xpr"]} {
 set_property XPM_LIBRARIES {XPM_CDC XPM_MEMORY XPM_FIFO} [current_project]
 set srcset [get_filesets sources_1]
 set_property source_mgmt_mode DisplayOnly [current_project]
-set rtl_files [glob -nocomplain -directory $rtl_dir *.sv caps/*.sv ecap/*.sv]
+set rtl_files [glob -nocomplain -directory $rtl_dir *.sv caps/*.sv ecap/*.sv crypto/*.sv]
 foreach path $rtl_files {
     set src [get_files -quiet -of_objects $srcset $path]
     if {![llength $src]} {

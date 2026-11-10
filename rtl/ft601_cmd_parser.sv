@@ -73,10 +73,14 @@ module ft601_cmd_parser
         is_read_cmd  = (opc_canon_q == OPC_READ) ||
                        (opc_canon_q == OPC_READ_BURST);
         opc_known    = is_write_cmd || is_read_cmd ||
-                       (opc_canon_q == OPC_NOP)     ||
-                       (opc_canon_q == OPC_STATUS)  ||
-                       (opc_canon_q == OPC_INFO)    ||
-                       (opc_canon_q == OPC_KEEPALIVE);
+                       (opc_canon_q == OPC_NOP)        ||
+                       (opc_canon_q == OPC_STATUS)     ||
+                       (opc_canon_q == OPC_INFO)       ||
+                       (opc_canon_q == OPC_KEEPALIVE)  ||
+                       (opc_canon_q == OPC_RESET)      ||
+                       (opc_canon_q == OPC_FLUSH)      ||
+                       (opc_canon_q == OPC_IRQ_ENABLE) ||
+                       (opc_canon_q == OPC_IRQ_CLEAR);
     end
 
     always_comb begin

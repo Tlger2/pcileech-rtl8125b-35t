@@ -108,7 +108,10 @@ logic [31:0] dw0_q, dw1_q, dw2_q, dw3_q;
 
 // ─── CplD beat tracking ───────────────────────────────────────────────────────
 logic        cpl_b0_seen_q;   // beat0 of a CplD was captured
+logic        cpl_b1_seen_q;   // beat1 (DW2 + first data DW) was captured
 logic [63:0] cpl_b0_q;        // beat0 data
+logic  [7:0] cpl_tag_q;       // tag from DW2, held while extra payload drains
+logic [31:0] cpl_data_q;      // first payload DW, held while extra payload drains
 
 // ─── RF read output ───────────────────────────────────────────────────────────
 logic [31:0] rf_rdata_q;
@@ -134,14 +137,6 @@ assign rx_cpl_ready = (state_q == ST_WAIT_CPL);
 // Pulse when a read completion has been captured (drives jitter FSM)
 assign dma_cpl_seen = (state_q == ST_DONE) && is_read_q;
 
-// ─── Combinational tag extraction from CplD beat1 ────────────────────────────
-// beat1 layout: tdata[63:32]=cpl_data  tdata[31:0]=DW2
-// DW2[15:8] = tag[7:0]
-logic [7:0]  cpl_tag_w;
-logic [31:0] cpl_dat_w;
-assign cpl_tag_w = rx_cpl_data[15:8];   // from DW2
-assign cpl_dat_w = rx_cpl_data[63:32];  // read data payload
-
 // ─── Main FSM ─────────────────────────────────────────────────────────────────
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
@@ -160,7 +155,10 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         tx_keep_q      <= 8'h0;
         tx_last_q      <= 1'b0;
         cpl_b0_seen_q  <= 1'b0;
+        cpl_b1_seen_q  <= 1'b0;
         cpl_b0_q       <= 64'h0;
+        cpl_tag_q      <= 8'h0;
+        cpl_data_q     <= 32'h0;
         rf_rdata_q     <= 32'h0;
         rf_rvalid_q    <= 1'b0;
     end else begin
@@ -181,8 +179,9 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                             tag_q      <= tag_q + 8'd1;
                             // Build 4DW MemRd header
                             dw0_q <= MEMRD_DW0;
-                            // DW1: {requester_id, tag, first_be=0xF, last_be=0x0}
-                            dw1_q <= {cfg_completer_id, tag_q, 4'hF, 4'h0};
+                            // DW1[7:4] = Last BE, DW1[3:0] = First BE.
+                            // Length 1: First BE = F, Last BE = 0.
+                            dw1_q <= {cfg_completer_id, tag_q, 4'h0, 4'hF};
                             dw2_q <= addr_hi_q;                  // upper 32-bit addr
                             dw3_q <= {addr_lo_q[31:2], 2'b00};  // lower 32-bit addr
                             state_q <= ST_TX_H0;
@@ -192,7 +191,8 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                             tag_q      <= tag_q + 8'd1;
                             // Build 4DW MemWr header
                             dw0_q <= MEMWR_DW0;
-                            dw1_q <= {cfg_completer_id, tag_q, 4'hF, 4'h0};
+                            // Same Length-1 byte enables as MemRd: First BE = F, Last BE = 0.
+                            dw1_q <= {cfg_completer_id, tag_q, 4'h0, 4'hF};
                             dw2_q <= addr_hi_q;
                             dw3_q <= {addr_lo_q[31:2], 2'b00};
                             state_q <= ST_TX_H0;
@@ -223,42 +223,59 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 // Kick happens in CTRL_ADDR write handler above
             end
 
-            ST_TX_H0: begin  // (#2 fix: stall until tx_req_ready)
-                // Emit beat0: {DW1, DW0}  (#7 fix: 4DW header = 2 beats)
-                tx_valid_q <= 1'b1;
-                tx_data_q  <= {dw1_q, dw0_q};
-                tx_keep_q  <= 8'hFF;
-                tx_last_q  <= 1'b0;
-                if (tx_req_ready)
-                    state_q <= ST_TX_H1;
-            end
-
-            ST_TX_H1: begin  // (#2 fix: stall until tx_req_ready)
-                // Emit beat1: {DW3, DW2}
-                tx_valid_q <= 1'b1;
-                tx_data_q  <= {dw3_q, dw2_q};
-                tx_keep_q  <= 8'hFF;
-                tx_last_q  <= is_read_q;  // MemRd ends at beat1; MemWr continues
-                if (tx_req_ready) begin
-                    if (is_read_q) begin
-                        tx_valid_q <= 1'b0;
-                        state_q    <= ST_WAIT_CPL;
-                    end else begin
-                        state_q <= ST_TX_PLD;
-                    end
+            // Registered TX: a beat is accepted only once tx_data_q already
+            // holds it and tx_req_ready is high. Accepting in the same cycle
+            // the beat is loaded drops it, because tready is usually already 1.
+            // On accept, preload the next beat so it is what the core samples
+            // on the following clock.
+            ST_TX_H0: begin
+                if (tx_valid_q && tx_req_ready && tx_data_q == {dw1_q, dw0_q}) begin
+                    state_q    <= ST_TX_H1;
+                    tx_valid_q <= 1'b1;
+                    tx_data_q  <= {dw3_q, dw2_q};
+                    tx_keep_q  <= 8'hFF;
+                    tx_last_q  <= is_read_q;
+                end else begin
+                    tx_valid_q <= 1'b1;
+                    tx_data_q  <= {dw1_q, dw0_q};
+                    tx_keep_q  <= 8'hFF;
+                    tx_last_q  <= 1'b0;
                 end
             end
 
-            ST_TX_PLD: begin  // (#3 fix: emit wdata payload beat for MemWr)
-                // Emit beat2: {32'h0, wdata}  tkeep=0x0F  tlast=1
-                tx_valid_q <= 1'b1;
-                tx_data_q  <= {32'h0000_0000, wdata_q};
-                tx_keep_q  <= 8'h0F;
-                tx_last_q  <= 1'b1;
-                if (tx_req_ready) begin
+            ST_TX_H1: begin
+                if (tx_valid_q && tx_req_ready && tx_data_q == {dw3_q, dw2_q}) begin
+                    if (is_read_q) begin
+                        tx_valid_q    <= 1'b0;
+                        cpl_b0_seen_q <= 1'b0;
+                        cpl_b1_seen_q <= 1'b0;
+                        state_q       <= ST_WAIT_CPL;
+                    end else begin
+                        state_q    <= ST_TX_PLD;
+                        tx_valid_q <= 1'b1;
+                        tx_data_q  <= {32'h0000_0000, wdata_q};
+                        tx_keep_q  <= 8'h0F;
+                        tx_last_q  <= 1'b1;
+                    end
+                end else begin
+                    tx_valid_q <= 1'b1;
+                    tx_data_q  <= {dw3_q, dw2_q};
+                    tx_keep_q  <= 8'hFF;
+                    tx_last_q  <= is_read_q;
+                end
+            end
+
+            ST_TX_PLD: begin
+                if (tx_valid_q && tx_req_ready &&
+                    tx_data_q == {32'h0000_0000, wdata_q}) begin
                     tx_valid_q <= 1'b0;
-                    status_q   <= 32'h2;  // (#4 fix: bit1=DONE)
+                    status_q   <= 32'h2;  // bit1=DONE
                     state_q    <= ST_DONE;
+                end else begin
+                    tx_valid_q <= 1'b1;
+                    tx_data_q  <= {32'h0000_0000, wdata_q};
+                    tx_keep_q  <= 8'h0F;
+                    tx_last_q  <= 1'b1;
                 end
             end
 
@@ -266,21 +283,38 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 tx_valid_q <= 1'b0;
                 if (rx_cpl_valid) begin
                     if (!cpl_b0_seen_q) begin
-                        // Beat0: {DW1, DW0} — save and wait for beat1
+                        // Beat0: {DW1, DW0} — header only. Tag and data are on beat1.
                         cpl_b0_q      <= rx_cpl_data;
                         cpl_b0_seen_q <= 1'b1;
-                    end else if (rx_cpl_last) begin
-                        // Beat1: {cpl_data, DW2} — DW2[15:8]=tag  (#5 fix: tag match)
-                        cpl_b0_seen_q <= 1'b0;
-                        if (cpl_tag_w == pend_tag_q) begin
-                            rdata_q  <= cpl_dat_w;      // (#4 fix: correct STATUS)
-                            status_q <= 32'h2;          // bit1=DONE
+                    end else if (!cpl_b1_seen_q) begin
+                        // Beat1: {first_data, DW2}. DW2[15:8] is the tag.
+                        // A 1-DW CplD ends here (tlast). A longer CplD keeps the
+                        // tag and the first data DW, then drains until tlast.
+                        if (rx_cpl_last) begin
+                            cpl_b0_seen_q <= 1'b0;
+                            if (rx_cpl_data[15:8] == pend_tag_q) begin
+                                rdata_q  <= rx_cpl_data[63:32];
+                                status_q <= 32'h2;      // bit1=DONE
+                            end else begin
+                                status_q <= 32'h4;      // bit2=ERR (tag mismatch)
+                            end
+                            state_q <= ST_DONE;
                         end else begin
-                            status_q <= 32'h4;          // bit2=ERR (tag mismatch)
+                            cpl_tag_q     <= rx_cpl_data[15:8];
+                            cpl_data_q    <= rx_cpl_data[63:32];
+                            cpl_b1_seen_q <= 1'b1;
+                        end
+                    end else if (rx_cpl_last) begin
+                        cpl_b0_seen_q <= 1'b0;
+                        cpl_b1_seen_q <= 1'b0;
+                        if (cpl_tag_q == pend_tag_q) begin
+                            rdata_q  <= cpl_data_q;
+                            status_q <= 32'h2;
+                        end else begin
+                            status_q <= 32'h4;
                         end
                         state_q <= ST_DONE;
                     end
-                    // If beat1 but !tlast: stray multi-DW CplD, stay and drain
                 end
             end
 

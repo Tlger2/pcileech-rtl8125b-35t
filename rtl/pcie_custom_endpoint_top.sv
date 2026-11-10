@@ -69,11 +69,8 @@ assign user_rst_n = ~user_reset;
 // ─── 7-series: RX cannot be back-pressured ───────────────────────────────────
 assign m_axis_rx_tready = 1'b1;
 
-// ─── Interrupt tie-offs ───────────────────────────────────────────────────────
-assign cfg_interrupt        = 1'b0;
-assign cfg_interrupt_assert = 1'b0;
-assign cfg_interrupt_di     = 8'h0;
-assign s_axis_tx_tuser      = 4'h0;
+// TX user sideband is unused (no error forward, no streaming ECRC).
+assign s_axis_tx_tuser = 4'h0;
 
 // =============================================================================
 // SECTION 1 — FT601 SFIFO (ft601_clk domain)
@@ -305,28 +302,46 @@ tlp_jitter_fsm u_jitter (
 // =============================================================================
 // SECTION 6 — TLP RX parser  (#1 fix: capture beat1 → rx_dw2/rx_dw3)
 // =============================================================================
-// Beat0: {DW1, DW0}   Beat1: {DW3, DW2}
+// 64-bit AXI-Stream, 4DW header:
+//   Beat0: {DW1, DW0}   Beat1: {DW3, DW2}   Beat2+: payload until tlast
+// Packet class is taken from the live beat-0 DW0 and held until tlast.
+// Classifying from the registered DW0 is one beat late and drops CplD beat 0.
 logic [31:0] rx_dw0_q, rx_dw1_q, rx_dw2_q, rx_dw3_q;
-logic        rx_hdr_valid_q;    // header fully captured
-logic        rx_beat0_seen_q;
+logic        rx_hdr_valid_q;    // header fully captured (pulses the next cycle)
+
+typedef enum logic [1:0] { RX_HDR0, RX_HDR1, RX_PAY } rx_phase_e;
+rx_phase_e rx_phase_q;
+logic      rx_in_pkt_q;
+logic      rx_pkt_cpld_q, rx_pkt_memwr_q;
+logic      rx_pay_latched_q;
 
 // (#2 fix: rx_active from AXI-Stream)
 logic rx_active;
 assign rx_active = m_axis_rx_tvalid;
 
-// TLP field decode from DW0
+// Live beat-0 decode (m_axis_rx_tdata[31:0] is DW0 on the first beat).
+logic [1:0] live_fmt;
+logic [4:0] live_type;
+logic       live_is_cpld, live_is_memwr;
+assign live_fmt      = m_axis_rx_tdata[30:29];
+assign live_type     = m_axis_rx_tdata[28:24];
+assign live_is_cpld  = (live_fmt == 2'b10) && (live_type == 5'b01010);
+assign live_is_memwr = (live_fmt == 2'b11) && (live_type == 5'b00000);
+
+// Held class. On beat 0 (rx_in_pkt_q == 0) the live DW0 is the class.
+logic rx_is_cpld;
+assign rx_is_cpld = rx_in_pkt_q ? rx_pkt_cpld_q : live_is_cpld;
+
+// Header fields from the captured beat-0 DW0. These are stable on the
+// cycle rx_hdr_valid_q is set, which is one cycle after beat 1.
 logic [1:0] rx_fmt;
 logic [4:0] rx_type;
 logic [9:0] rx_length;
-assign rx_fmt    = rx_dw0_q[30:29];
-assign rx_type   = rx_dw0_q[28:24];
-assign rx_length = rx_dw0_q[9:0];
-
-// Decoded TLP class flags
-logic rx_is_memrd, rx_is_memwr, rx_is_cpld;
+logic       rx_is_memrd;
+assign rx_fmt      = rx_dw0_q[30:29];
+assign rx_type     = rx_dw0_q[28:24];
+assign rx_length   = rx_dw0_q[9:0];
 assign rx_is_memrd = (rx_fmt == 2'b01) && (rx_type == 5'b00000);
-assign rx_is_memwr = (rx_fmt == 2'b11) && (rx_type == 5'b00000);
-assign rx_is_cpld  = (rx_fmt == 2'b10) && (rx_type == 5'b01010);
 
 // BAR0 hit: requester is EAC/host probing our BAR0 (addr[27:16] == 0 for 64K)
 logic [31:0] rx_bar0_addr;
@@ -340,31 +355,53 @@ assign rx_tag    = rx_dw1_q[15:8];
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        rx_dw0_q       <= '0;
-        rx_dw1_q       <= '0;
-        rx_dw2_q       <= '0;  // (#1 fix)
-        rx_dw3_q       <= '0;  // (#1 fix)
-        rx_beat0_seen_q <= 1'b0;
+        rx_dw0_q        <= '0;
+        rx_dw1_q        <= '0;
+        rx_dw2_q        <= '0;  // (#1 fix)
+        rx_dw3_q        <= '0;  // (#1 fix)
         rx_hdr_valid_q  <= 1'b0;
+        rx_phase_q      <= RX_HDR0;
+        rx_in_pkt_q     <= 1'b0;
+        rx_pkt_cpld_q   <= 1'b0;
+        rx_pkt_memwr_q  <= 1'b0;
+        rx_pay_latched_q <= 1'b0;
     end else begin
         rx_hdr_valid_q <= 1'b0;
-        if (m_axis_rx_tvalid) begin
-            if (!rx_beat0_seen_q) begin
-                // Beat0: {DW1, DW0}
-                rx_dw0_q        <= m_axis_rx_tdata[31:0];
-                rx_dw1_q        <= m_axis_rx_tdata[63:32];
-                rx_beat0_seen_q <= 1'b1;
+        if (m_axis_rx_tvalid && !rx_in_pkt_q) begin
+            // Beat 0 of a new packet. Classify from the DW0 on this beat.
+            rx_dw0_q       <= m_axis_rx_tdata[31:0];
+            rx_dw1_q       <= m_axis_rx_tdata[63:32];
+            rx_pkt_cpld_q  <= live_is_cpld;
+            rx_pkt_memwr_q <= live_is_memwr;
+            rx_pay_latched_q <= 1'b0;
+            if (m_axis_rx_tlast) begin
+                rx_in_pkt_q <= 1'b0;
+                rx_phase_q  <= RX_HDR0;
             end else begin
-                // Beat1: {DW3, DW2}  (#1 fix: capture both DWs)
-                rx_dw2_q        <= m_axis_rx_tdata[31:0];
-                rx_dw3_q        <= m_axis_rx_tdata[63:32];
-                rx_beat0_seen_q <= 1'b0;
-                rx_hdr_valid_q  <= 1'b1;
+                rx_in_pkt_q <= 1'b1;
+                rx_phase_q  <= RX_HDR1;
+            end
+        end else if (m_axis_rx_tvalid && rx_phase_q == RX_HDR1) begin
+            // Beat 1: {DW3, DW2}. A header-only TLP (MemRd) ends here.
+            rx_dw2_q       <= m_axis_rx_tdata[31:0];
+            rx_dw3_q       <= m_axis_rx_tdata[63:32];
+            rx_hdr_valid_q <= 1'b1;
+            if (m_axis_rx_tlast) begin
+                rx_in_pkt_q <= 1'b0;
+                rx_phase_q  <= RX_HDR0;
+            end else begin
+                rx_phase_q <= RX_PAY;
+            end
+        end else if (m_axis_rx_tvalid && rx_phase_q == RX_PAY) begin
+            // Payload beats are not a new header. Stay here until tlast.
+            // Latch-once flag so a multi-DW MemWr commits only its first DW.
+            if (rx_pkt_memwr_q && !rx_pay_latched_q)
+                rx_pay_latched_q <= 1'b1;
+            if (m_axis_rx_tlast) begin
+                rx_in_pkt_q <= 1'b0;
+                rx_phase_q  <= RX_HDR0;
             end
         end
-        // Clear on last beat if still mid-header (malformed TLP)
-        if (m_axis_rx_tvalid && m_axis_rx_tlast && rx_beat0_seen_q)
-            rx_beat0_seen_q <= 1'b0;
     end
 end
 
@@ -378,9 +415,9 @@ end
 
 
 
-// Route the raw AXI-Stream RX to dma_engine when it looks like a CplD.
-// The dma_engine uses its pend_tag to validate; we just forward all CplDs.
-// BAR0 MemRd processing is handled separately via registered headers above.
+// Route the raw AXI-Stream RX to dma_engine when the packet class,
+// sampled on beat 0 and held until tlast, is CplD. Every beat of that
+// packet is forwarded, including beat 0.
 assign rx_cpl_valid_w = m_axis_rx_tvalid && rx_is_cpld;
 assign rx_cpl_data_w  = m_axis_rx_tdata;
 assign rx_cpl_keep_w  = m_axis_rx_tkeep;
@@ -397,28 +434,51 @@ logic [31:0] bar0_rdata;
 logic        bar0_rvalid;
 logic        bar0_mem_rd_en, bar0_mem_wr_en;
 logic [15:0] bar0_byte_addr;
-logic [31:0] bar0_wdata;
-logic  [3:0] bar0_be;
+logic [31:0] bar0_wdata, bar0_wdata_q;
+logic  [3:0] bar0_be, bar0_be_q;
+logic        bar0_mem_wr_en_q;
+logic        bar0_wr_pend_q;
+logic        bar0_rd_pending_set;
 logic        irq_pulse;
 
-// BAR0 access is from host MemRd/MemWr — decode address from rx_dw3
+// BAR0 access is from host MemRd/MemWr — decode address from rx_dw3.
+// wdata / First BE are latched from the first payload beat; mem_wr_en
+// pulses the cycle after that latch so the register bank sees both.
 assign bar0_byte_addr = rx_bar0_addr[15:0];
-assign bar0_wdata     = 32'h0;    // Memory Write payload is not wired to the register bank
-assign bar0_be        = 4'hF;
+assign bar0_wdata     = bar0_wdata_q;
+assign bar0_be        = bar0_be_q;
+assign bar0_mem_wr_en = bar0_mem_wr_en_q;
 
-// Trigger BAR0 read when header is fully captured and it's a MemRd
+// Trigger BAR0 read when header is fully captured and it's a MemRd.
 logic bar0_rd_pending_q;
-logic bar0_rd_pending_set;
-logic bar0_rd_pending_clr;
 
 assign bar0_rd_pending_set = rx_hdr_valid_q && rx_is_memrd;
 assign bar0_mem_rd_en      = bar0_rd_pending_q;
-assign bar0_mem_wr_en      = rx_hdr_valid_q && rx_is_memwr;
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
-    if (!user_rst_n)        bar0_rd_pending_q <= 1'b0;
-    else if (bar0_rd_pending_set) bar0_rd_pending_q <= 1'b1;
-    else if (bar0_rvalid)         bar0_rd_pending_q <= 1'b0;
+    if (!user_rst_n) begin
+        bar0_rd_pending_q <= 1'b0;
+        bar0_wdata_q      <= 32'h0;
+        bar0_be_q         <= 4'h0;
+        bar0_mem_wr_en_q  <= 1'b0;
+        bar0_wr_pend_q    <= 1'b0;
+    end else begin
+        // Pulse one cycle after the payload latch (bar0_wr_pend_q is the
+        // previous cycle's request). Default-clear, then maybe re-arm.
+        bar0_mem_wr_en_q <= bar0_wr_pend_q;
+        bar0_wr_pend_q   <= 1'b0;
+
+        if (bar0_rd_pending_set)      bar0_rd_pending_q <= 1'b1;
+        else if (bar0_rvalid)         bar0_rd_pending_q <= 1'b0;
+
+        // First payload DW of a 4DW MemWr. First BE lives in captured DW1[3:0].
+        if (m_axis_rx_tvalid && rx_in_pkt_q && rx_phase_q == RX_PAY &&
+            rx_pkt_memwr_q && !rx_pay_latched_q) begin
+            bar0_wdata_q   <= m_axis_rx_tdata[31:0];
+            bar0_be_q      <= rx_dw1_q[3:0];
+            bar0_wr_pend_q <= 1'b1;
+        end
+    end
 end
 
 rtl8125b_bar0_regs #(.ENABLE_SHADOW(1'b0)) u_bar0 (
@@ -434,6 +494,29 @@ rtl8125b_bar0_regs #(.ENABLE_SHADOW(1'b0)) u_bar0 (
     .tx_desc_ring_level(16'h0),
     .rx_desc_ring_level(16'h0),
     .irq_pulse         (irq_pulse)
+);
+
+// MSI request to the 7-series integrated block. irq_pulse is already in
+// user_clk (the PCIe core's user clock), so src_clk and pcie_clk match.
+// cfg_interrupt is held until cfg_interrupt_rdy. cfg_interrupt_assert stays
+// low (MSI, not legacy INTx). cfg_interrupt_di carries the vector number.
+pcie_msi_trigger #(
+    .NUM_VECTORS(8),
+    .STRETCH_CYC(4)
+) u_msi (
+    .pcie_clk               (user_clk),
+    .pcie_rst_n             (user_rst_n),
+    .src_clk                (user_clk),
+    .irq_req                ({7'b0, irq_pulse}),
+    .vector_mask            (8'h00),
+    .cfg_interrupt          (cfg_interrupt),
+    .cfg_interrupt_rdy      (cfg_interrupt_rdy),
+    .cfg_interrupt_msienable(cfg_interrupt_msienable),
+    .cfg_interrupt_mmenable (cfg_interrupt_mmenable),
+    .cfg_interrupt_assert   (cfg_interrupt_assert),
+    .cfg_interrupt_di       (cfg_interrupt_di),
+    .pending                (),
+    .busy                   ()
 );
 
 // BAR0 completion with one DWORD of data. Snapshot both beats so a stall
@@ -453,8 +536,11 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         case (bar_tx_q)
             BAR_IDLE: if (bar0_rvalid) begin
                 bar_tx_data_q <= {cfg_completer_id, 3'b000, 1'b0, 12'd4, CPLD_DW0};
+                // Lower Address is the DWORD-aligned byte offset of the first
+                // returned byte (PCIe CplD DW2[6:0]).
                 bar_tx_payload_q <= {
-                    bar0_rdata, rx_req_id, rx_tag, 1'b0, rx_bar0_addr[6:0]
+                    bar0_rdata, rx_req_id, rx_tag, 1'b0,
+                    rx_bar0_addr[6:2], 2'b00
                 };
                 bar_tx_q <= BAR_B0;
             end

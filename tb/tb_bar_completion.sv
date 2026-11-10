@@ -28,16 +28,19 @@ module tb_bar_completion;
         .ft601_data(), .ft601_be()
     );
 
-    task automatic request_read(input logic [7:0] tag);
+    task automatic request_read(input logic [7:0] tag, input logic [31:0] addr);
         @(negedge user_clk);
         rx_valid = 1;
+        rx_last = 0;
         rx_data = {16'h1234, tag, 8'h0f, 32'h2000_0001};
         @(negedge user_clk);
-        rx_data = 64'b0;
+        // 4DW header beat 1 is {DW3, DW2}; DW3 is the lower address.
+        rx_data = {addr, 32'b0};
         rx_last = 1;
         @(negedge user_clk);
         rx_valid = 0;
         rx_last = 0;
+        rx_data = 64'b0;
     endtask
 
     task automatic expect_beat(input logic [63:0] data, input bit last, input bit stall);
@@ -58,14 +61,14 @@ module tb_bar_completion;
     initial begin
         repeat (4) @(negedge user_clk);
         user_reset = 0;
-        request_read(8'h5a);
+        request_read(8'h5a, 32'h0);
         expect_beat(64'h0200_0004_4a00_0001, 0, 0);
         expect_beat(64'h4c12_3456_1234_5a00, 1, 0);
         repeat (4) @(negedge user_clk);
         if (tx_valid) $fatal(1, "Unexpected duplicate completion");
 
         tx_ready = 0;
-        request_read(8'h7b);
+        request_read(8'h7b, 32'h0);
         expect_beat(64'h0200_0004_4a00_0001, 0, 1);
         // Deassert ready before the next rising edge. The final beat must
         // retain its data and TLAST even if the live completer ID changes.
@@ -75,7 +78,16 @@ module tb_bar_completion;
         expect_beat(64'h4c12_3456_1234_7b00, 1, 1);
         repeat (4) @(negedge user_clk);
         if (tx_valid) $fatal(1, "Unexpected duplicate completion after a stall");
+
+        // Addr 0x46 is not DWORD-aligned. CplD Lower Address must be
+        // {addr[6:2], 2'b00} = 0x44, and this offset is not a named register.
+        completer_id = 16'h0200;
+        tx_ready = 1;
+        request_read(8'h91, 32'h0000_0046);
+        expect_beat(64'h0200_0004_4a00_0001, 0, 0);
+        expect_beat(64'h0000_0000_1234_9144, 1, 0);
         $display("PASS: BAR completion delivers both beats with ready high or stalled");
+        $display("PASS: CplD lower address is {addr[6:2], 2'b00}");
         $finish;
     end
 
