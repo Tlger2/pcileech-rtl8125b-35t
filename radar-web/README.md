@@ -1,6 +1,6 @@
 # AtomicDMA — Rust radar (web)
 
-Web UI on top of the classic radar: full island map, loot filter, ESP widget, DMA panel, chams, hack functions, and aim assist. Layout matches AtomicDMA.
+Read-only web radar: full island map in the in-game Rust G-map style (north-up, A–Z grid, player arrow), loot filter, ESP widget, DMA panel, and visual overlays. Layout matches AtomicDMA. **No memory writes** — DMA is snapshot ingest / FT601 identify-read only.
 
 ## Run
 
@@ -10,22 +10,24 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 — starts on a live **SIM** world (seed 1337, size 4000) so the overlay is usable without the card.
+Open http://127.0.0.1:5173 — starts on a live **SIM** world (seed 1337, size 4000) so the overlay is usable without the card. On SIM start, Reload Map/Radar, and the first DMA `local_player`, the view auto-formats like opening the G-map (~750 m around you). Interactive camera then lets you pan without being pulled back.
 
 ## DMA at home
 
 1. Flash the 35T firmware (PR on `cursor/rtl8125b-eac-hide-1fc4`).
-2. Run ReaderRadar `rust_snapshot.py` **or** this bridge:
+2. Run ReaderRadar `rust_snapshot.py` **or** this read-only bridge:
 
 ```bash
 python radar-web/bridge/dma_bridge.py
 ```
 
-The UI **Connect DMA** button probes `http://127.0.0.1:1738/state` and `http://127.0.0.1:8080/state` (ReaderRadar). Snapshot schema is the ReaderRadar JSON (`entities[].category/position/meta`).
+The UI **Connect DMA** button probes `http://127.0.0.1:1738/state` and `http://127.0.0.1:8080/state` (ReaderRadar). Snapshot schema is the ReaderRadar JSON (`entities[].category/position/meta`, `world_size`, optional `world.map_image_path` basemap).
 
-Aim write: enable **Allow memory features** in the menu. The UI POSTs `{pitch,yaw,bone,targetId}` to `:1738/aim`. The bridge applies it only when `ATOMIC_DMA_WRITE=1` and MemProcFS is present. Offsets: `public/offsets.json` (edit after `rust_probe.py`).
+The bridge serves `GET /state`, `GET /health`, snapshot watch, optional `GET /map`, and optional FT601 identify/read. It does not POST aim angles or write process memory.
 
 This bitstream speaks MAGIC `0x5AA5C33C`, not stock MemProcFS `fpga://`. Use `host/ft601_client.py --identify` plus the bridge; native `fpga://` will not identify until a TLP-stream shim exists.
+
+Offsets in `public/offsets.json` are for ReaderRadar / probe notes only — the web radar never writes them.
 
 ## Hotkeys
 

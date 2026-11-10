@@ -44,22 +44,3 @@ export async function pullSnapshot(): Promise<Record<string, unknown> | null> {
   }
   return null;
 }
-
-export async function pushAim(payload: {
-  pitch: number;
-  yaw: number;
-  bone: string;
-  targetId: string | null;
-}): Promise<boolean> {
-  try {
-    const r = await fetch("http://127.0.0.1:1738/aim", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(250),
-    });
-    return r.ok;
-  } catch {
-    return false;
-  }
-}

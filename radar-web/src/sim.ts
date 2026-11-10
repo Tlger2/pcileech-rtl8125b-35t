@@ -1,13 +1,14 @@
-import { applyAim, selectAimTarget } from "./aim";
 import {
   generateTerrain,
   isLandAt,
   lineOfSight,
   randomLandPoint,
+  RUST_MONUMENTS,
   sampleHeight,
   type Terrain,
 } from "./mapgen";
 import { clamp, mulberry32, wrapDeg } from "./rng";
+import { snapshotMapImagePath, snapshotWorldSize } from "./rustMap";
 import {
   FILTER_CATEGORY,
   type AppSettings,
@@ -64,52 +65,47 @@ function catLabel(c: EntityCategory, amount?: number): string {
       return "Elite Crate";
     case "dropped":
       return "Hunting Bow";
+    case "monument":
+      return "Monument";
     default:
       return c;
   }
 }
 
+function nearestPlayerDistance(local: LocalPlayer, entities: Entity[]): number {
+  let best = 0;
+  for (const e of entities) {
+    if (!e.category.startsWith("player") || e.local) continue;
+    const d = Math.hypot(e.position.x - local.position.x, e.position.z - local.position.z);
+    if (!best || d < best) best = d;
+  }
+  return best;
+}
+
+export interface IngestResult {
+  sizeChanged: boolean;
+  spawnedLocal: boolean;
+}
+
 export class WorldSim {
-  readonly seed: number;
-  readonly size: number;
-  readonly terrain: Terrain;
+  seed: number;
+  size: number;
+  terrain: Terrain;
   private rand: () => number;
   private actors: Actor[] = [];
   private statics: Entity[] = [];
   local: LocalPlayer;
   dmaConnected = false;
   provider: WorldSnapshot["provider"] = "sim";
-  private lastAim = selectAimTarget(
-    {
-      position: { x: 0, y: 0, z: 0 },
-      health: 100,
-      yaw: 0,
-      pitch: 0,
-      name: "local",
-      airborne: false,
-      recoilPitch: 0,
-      recoilYaw: 0,
-    },
-    [],
-    {
-      enabled: false,
-      bone: "neck",
-      smoothX: 0.69,
-      smoothY: 0.69,
-      lockon: true,
-      recoilReduction: true,
-      recoilIntensity: 9,
-      fov: 12,
-    },
-    true,
-  );
+  liveLocal = true;
+  mapImagePath: string | null = null;
   private time = 0;
 
   constructor(seed = 1337, size = 4000) {
     this.seed = seed;
     this.size = size;
     this.rand = mulberry32(seed);
-    this.terrain = generateTerrain(size, seed, 256);
+    this.terrain = generateTerrain(size, seed, 512);
     this.local = this.spawnLocal();
     this.seedWorld();
   }
@@ -126,8 +122,6 @@ export class WorldSim {
       pitch: 4,
       name: "local",
       airborne: false,
-      recoilPitch: -1.4,
-      recoilYaw: 0.35,
     };
   }
 
@@ -225,6 +219,18 @@ export class WorldSim {
     this.addStatic("bradley", 1, () => ({ label: "Bradley", health: 1000 }));
     this.addStatic("helicopter", 1, () => ({ label: "Patrol Heli", health: 10000 }));
 
+    for (const m of RUST_MONUMENTS) {
+      const x = m.nx * this.size;
+      const z = m.nz * this.size;
+      this.statics.push({
+        id: `monument-${m.name}`,
+        category: "monument",
+        position: { x, y: sampleHeight(this.terrain, x, z) * 80, z },
+        label: m.name,
+        visible: true,
+      });
+    }
+
     const makePlayer = (
       i: number,
       kind: "human" | "sleep" | "npc" | "admin",
@@ -237,7 +243,7 @@ export class WorldSim {
           ? `Scientist ${i}`
           : kind === "admin"
             ? "AdminWatch"
-            : NAMES[i % NAMES.length] + (kind === "sleep" ? "" : "");
+            : NAMES[i % NAMES.length];
       const category: EntityCategory =
         kind === "sleep"
           ? "player-sleeping"
@@ -280,29 +286,54 @@ export class WorldSim {
   }
 
   reloadMap(seed = this.seed): void {
-    Object.assign(this, new WorldSim(seed, this.size));
+    const next = new WorldSim(seed, this.size);
+    this.seed = next.seed;
+    this.size = next.size;
+    this.terrain = next.terrain;
+    this.rand = next.rand;
+    this.actors = next.actors;
+    this.statics = next.statics;
+    this.local = next.local;
+    this.time = 0;
+    this.liveLocal = true;
+    this.provider = "sim";
+    this.mapImagePath = null;
   }
 
-  ingestSnapshot(raw: {
-    world_size?: number;
-    local_player?: { position: { x: number; y: number; z: number }; health: number } | null;
-    entities?: Array<{
+  ingestSnapshot(raw: Record<string, unknown>): IngestResult {
+    const hadLive = this.liveLocal && this.provider !== "sim";
+    const newSize = snapshotWorldSize(raw, this.size);
+    const sizeChanged = newSize !== this.size;
+    if (sizeChanged) {
+      this.size = newSize;
+      this.terrain = generateTerrain(newSize, this.seed, 512);
+    }
+    this.provider = "snapshot";
+    this.dmaConnected = true;
+    this.mapImagePath = snapshotMapImagePath(raw);
+    const lp = raw.local_player as
+      | { position: { x: number; y: number; z: number }; health: number; yaw?: number }
+      | null
+      | undefined;
+    const spawnedLocal = Boolean(lp) && !hadLive;
+    if (lp) {
+      this.local.position = lp.position;
+      this.local.health = lp.health;
+      if (typeof lp.yaw === "number") this.local.yaw = lp.yaw;
+      this.liveLocal = true;
+    } else {
+      this.liveLocal = false;
+    }
+    const rawEnts = Array.isArray(raw.entities) ? (raw.entities as Array<{
       category: string;
       position: { x: number; y: number; z: number };
       meta?: Record<string, unknown>;
-    }>;
-  }): void {
-    this.provider = "snapshot";
-    this.dmaConnected = true;
-    if (raw.local_player) {
-      this.local.position = raw.local_player.position;
-      this.local.health = raw.local_player.health;
-    }
+    }>) : [];
     const ents: Actor[] = [];
-    for (let i = 0; i < (raw.entities?.length ?? 0); i++) {
-      const e = raw.entities![i];
+    for (let i = 0; i < rawEnts.length; i++) {
+      const e = rawEnts[i];
       const meta = e.meta ?? {};
-      const cat = (e.category === "player-sleeping" ? "player-sleeping" : e.category) as EntityCategory;
+      const cat = e.category as EntityCategory;
       ents.push({
         id: `live-${i}`,
         category: cat,
@@ -319,8 +350,16 @@ export class WorldSim {
         wander: 0,
       });
     }
-    this.actors = ents.filter((e) => e.category.startsWith("player") || e.category.startsWith("animal") || e.category === "vehicle" || e.category === "bradley" || e.category === "helicopter");
+    this.actors = ents.filter(
+      (e) =>
+        e.category.startsWith("player") ||
+        e.category.startsWith("animal") ||
+        e.category === "vehicle" ||
+        e.category === "bradley" ||
+        e.category === "helicopter",
+    );
     this.statics = ents.filter((e) => !this.actors.includes(e));
+    return { sizeChanged, spawnedLocal };
   }
 
   tick(dt: number, settings: AppSettings): WorldSnapshot {
@@ -328,10 +367,8 @@ export class WorldSim {
     this.time += dt;
     const hacks = settings.hacks;
 
-    this.local.airborne = hacks.spiderman ? false : Math.sin(this.time * 0.7) > 0.92;
-    this.local.recoilPitch = -1.1 - Math.sin(this.time * 9) * 0.45;
-    this.local.recoilYaw = Math.cos(this.time * 7) * 0.4;
-    const speed = hacks.spiderman ? 28 : 16;
+    this.local.airborne = Math.sin(this.time * 0.7) > 0.92;
+    const speed = 16;
     this.local.position.x = clamp(
       this.local.position.x + Math.sin((this.local.yaw * Math.PI) / 180) * speed * dt * 0.15,
       0,
@@ -365,7 +402,6 @@ export class WorldSim {
         a.boneHead = { x: a.position.x, y: a.position.y + 1.72, z: a.position.z };
         a.boneNeck = { x: a.position.x, y: a.position.y + 1.48, z: a.position.z };
         a.boneBody = { x: a.position.x, y: a.position.y + 1.02, z: a.position.z };
-        if (hacks.instantEoka && a.held === "pistol.eoka") a.held = "pistol.eoka*";
       }
     }
 
@@ -383,14 +419,6 @@ export class WorldSim {
     }
 
     const entities = [...this.statics, ...this.actors];
-    this.lastAim = selectAimTarget(
-      this.local,
-      entities,
-      settings.aim,
-      hacks.shootWhileJumping,
-    );
-    applyAim(this.local, this.lastAim, settings.aim);
-
     const frameMs = performance.now() - t0;
     return {
       ts: Date.now() / 1000,
@@ -403,7 +431,9 @@ export class WorldSim {
       networkables: 4100 + (entities.length % 400),
       fps: 0,
       frameMs,
-      aim: this.lastAim,
+      nearestDistance: nearestPlayerDistance(this.local, entities),
+      mapImagePath: this.mapImagePath,
+      liveLocal: this.liveLocal,
     };
   }
 }
@@ -425,26 +455,11 @@ export function defaultSettings(): AppSettings {
     loot,
     chams: "full-pink",
     hacks: {
-      allowMemory: false,
       visCheckChams: true,
       adminEsp: true,
       interactiveCamera: true,
-      adminFlag: false,
-      shootWhileJumping: false,
-      spiderman: false,
       brightNight: false,
       brightCaves: true,
-      instantEoka: false,
-    },
-    aim: {
-      enabled: true,
-      bone: "neck",
-      smoothX: 0.69,
-      smoothY: 0.69,
-      lockon: true,
-      recoilReduction: true,
-      recoilIntensity: 9,
-      fov: 12,
     },
     showMenu: true,
     showLoot: true,
@@ -460,13 +475,18 @@ export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem("atomicdma-settings");
     if (!raw) return base;
-    const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & { hacks?: Partial<AppSettings["hacks"]> };
     return {
       ...base,
       ...parsed,
       loot: { ...base.loot, ...parsed.loot },
-      hacks: { ...base.hacks, ...parsed.hacks },
-      aim: { ...base.aim, ...parsed.aim },
+      hacks: {
+        visCheckChams: parsed.hacks?.visCheckChams ?? base.hacks.visCheckChams,
+        adminEsp: parsed.hacks?.adminEsp ?? base.hacks.adminEsp,
+        interactiveCamera: parsed.hacks?.interactiveCamera ?? base.hacks.interactiveCamera,
+        brightNight: parsed.hacks?.brightNight ?? base.hacks.brightNight,
+        brightCaves: parsed.hacks?.brightCaves ?? base.hacks.brightCaves,
+      },
     };
   } catch {
     return base;
@@ -478,7 +498,7 @@ export function saveSettings(s: AppSettings): void {
 }
 
 export function passesFilter(e: Entity, settings: AppSettings): boolean {
-  if (e.category.startsWith("player")) return true;
+  if (e.category.startsWith("player") || e.category === "monument") return true;
   for (const key of Object.keys(FILTER_CATEGORY) as LootFilterKey[]) {
     if (FILTER_CATEGORY[key].includes(e.category)) return settings.loot[key];
   }

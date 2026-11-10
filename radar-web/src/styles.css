@@ -41,6 +41,14 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .titlebar b { font-weight: 600; }
 .titlebar .fps { color: #c5d0d4; }
+.titlebar .grid-chip {
+  color: #e6e0c8;
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  padding: 1px 8px;
+  border-radius: 3px;
+  background: #243038;
+}
 .titlebar .spacer { flex: 1; }
 .titlebar .icons { display: flex; gap: 6px; }
 .titlebar .icons button {
@@ -51,7 +59,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .titlebar .icons button:hover { background: #3a4650; }
 .titlebar .icons button.active { background: #1e6e68; color: #fff; }
 
-.stage { position: relative; overflow: hidden; background: #2d7aa0; }
+.stage { position: relative; overflow: hidden; background: #083044; }
 .stage > canvas {
   position: absolute;
   inset: 0;

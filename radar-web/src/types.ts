@@ -36,9 +36,8 @@ export type EntityCategory =
   | "base"
   | "dropped"
   | "sleeping-bag"
-  | "collectible";
-
-export type Bone = "head" | "neck" | "body";
+  | "collectible"
+  | "monument";
 
 export type ChamsMode = "default" | "full-pink" | "not-see";
 
@@ -76,22 +75,6 @@ export interface LocalPlayer {
   pitch: number;
   name: string;
   airborne: boolean;
-  recoilPitch: number;
-  recoilYaw: number;
-}
-
-export interface AimSolution {
-  targetId: string | null;
-  bone: Bone;
-  world: Vec3 | null;
-  pitch: number;
-  yaw: number;
-  deltaPitch: number;
-  deltaYaw: number;
-  fov: number;
-  distance: number;
-  locked: boolean;
-  elapsedMs: number;
 }
 
 export interface WorldSnapshot {
@@ -105,38 +88,23 @@ export interface WorldSnapshot {
   networkables: number;
   fps: number;
   frameMs: number;
-  aim: AimSolution;
+  nearestDistance: number;
+  mapImagePath?: string | null;
+  liveLocal: boolean;
 }
 
 export interface HackFlags {
-  allowMemory: boolean;
   visCheckChams: boolean;
   adminEsp: boolean;
   interactiveCamera: boolean;
-  adminFlag: boolean;
-  shootWhileJumping: boolean;
-  spiderman: boolean;
   brightNight: boolean;
   brightCaves: boolean;
-  instantEoka: boolean;
-}
-
-export interface AimSettings {
-  enabled: boolean;
-  bone: Bone;
-  smoothX: number;
-  smoothY: number;
-  lockon: boolean;
-  recoilReduction: boolean;
-  recoilIntensity: number;
-  fov: number;
 }
 
 export interface AppSettings {
   loot: Record<LootFilterKey, boolean>;
   chams: ChamsMode;
   hacks: HackFlags;
-  aim: AimSettings;
   showMenu: boolean;
   showLoot: boolean;
   showEsp: boolean;

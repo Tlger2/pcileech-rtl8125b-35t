@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EspCanvas, RadarCanvas } from "./RadarCanvas";
-import { probeDma, pullSnapshot, pushAim } from "./dma";
+import { probeDma, pullSnapshot } from "./dma";
 import { HELP } from "./help";
+import { joinFormatView, stageSize } from "./rustMap";
 import { loadSettings, saveSettings, WorldSim } from "./sim";
 import type {
   AppSettings,
-  Bone,
   ChamsMode,
   Entity,
   LootFilterKey,
@@ -25,6 +25,13 @@ const FILTERS: { key: LootFilterKey; label: string; color: string }[] = [
   { key: "vehicle", label: "Vehicle", color: "#d94cff" },
 ];
 
+function formatJoin(world: WorldSnapshot) {
+  const local = world.localPlayer;
+  if (!local) return null;
+  const { w, h } = stageSize();
+  return joinFormatView(local.position, w, h);
+}
+
 export function App() {
   const simRef = useRef(new WorldSim(1337, 4000));
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
@@ -36,15 +43,31 @@ export function App() {
   const [fps, setFps] = useState(60);
   const [help, setHelp] = useState<string | null>(null);
   const [hover, setHover] = useState<{ e: Entity; x: number; y: number } | null>(null);
-  const [view, setView] = useState(() => ({
-    x: simRef.current.local.position.x,
-    z: simRef.current.local.position.z,
-    scale: 0.4,
-  }));
+  const [view, setView] = useState(() => {
+    const local = simRef.current.local.position;
+    return joinFormatView(local);
+  });
   const [mapRev, setMapRev] = useState(0);
   const [dmaMsg, setDmaMsg] = useState("SIM world");
+  const joinRef = useRef({
+    didSimStart: false,
+    hadLiveLocal: false,
+    worldSize: simRef.current.size,
+  });
+
+  const applyJoinFormat = useCallback((world: WorldSnapshot) => {
+    const next = formatJoin(world);
+    if (next) setView(next);
+  }, []);
 
   useEffect(() => saveSettings(settings), [settings]);
+
+  useEffect(() => {
+    const world = simRef.current.tick(0, settingsRef.current);
+    applyJoinFormat(world);
+    joinRef.current.didSimStart = true;
+    joinRef.current.worldSize = world.worldSize;
+  }, [applyJoinFormat]);
 
   useEffect(() => {
     let frames = 0;
@@ -70,20 +93,29 @@ export function App() {
             z: world.localPlayer!.position.z,
           }));
         }
-        if (s.hacks.allowMemory && world.dmaConnected && world.aim.targetId) {
-          void pushAim({
-            pitch: world.aim.pitch,
-            yaw: world.aim.yaw,
-            bone: world.aim.bone,
-            targetId: world.aim.targetId,
-          });
-        }
       }
     };
     pulse();
     const id = window.setInterval(pulse, 50);
     return () => window.clearInterval(id);
   }, []);
+
+  useEffect(() => {
+    if (!snap.dmaConnected) return;
+    const id = window.setInterval(() => {
+      void (async () => {
+        const raw = await pullSnapshot();
+        if (!raw) return;
+        const result = simRef.current.ingestSnapshot(raw);
+        const world = simRef.current.tick(0, settingsRef.current);
+        if (result.sizeChanged) setMapRev((n) => n + 1);
+        if (result.spawnedLocal || result.sizeChanged) applyJoinFormat(world);
+        joinRef.current.hadLiveLocal = world.liveLocal;
+        joinRef.current.worldSize = world.worldSize;
+      })();
+    }, 400);
+    return () => window.clearInterval(id);
+  }, [snap.dmaConnected, applyJoinFormat]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -111,6 +143,8 @@ export function App() {
     if (!on) {
       simRef.current.dmaConnected = false;
       simRef.current.provider = "sim";
+      simRef.current.liveLocal = true;
+      joinRef.current.hadLiveLocal = false;
       setDmaMsg("SIM world");
       return;
     }
@@ -121,17 +155,12 @@ export function App() {
     if (st.connected) {
       const raw = await pullSnapshot();
       if (raw) {
-        simRef.current.ingestSnapshot(
-          raw as {
-            world_size?: number;
-            local_player?: { position: { x: number; y: number; z: number }; health: number } | null;
-            entities?: Array<{
-              category: string;
-              position: { x: number; y: number; z: number };
-              meta?: Record<string, unknown>;
-            }>;
-          },
-        );
+        const result = simRef.current.ingestSnapshot(raw);
+        const world = simRef.current.tick(0, settingsRef.current);
+        if (result.sizeChanged) setMapRev((n) => n + 1);
+        if (world.liveLocal || result.sizeChanged) applyJoinFormat(world);
+        joinRef.current.hadLiveLocal = world.liveLocal;
+        joinRef.current.worldSize = world.worldSize;
       }
     }
   };
@@ -140,20 +169,17 @@ export function App() {
     if (simRef.current.dmaConnected) {
       const raw = await pullSnapshot();
       if (raw) {
-        simRef.current.ingestSnapshot(
-          raw as {
-            world_size?: number;
-            local_player?: { position: { x: number; y: number; z: number }; health: number } | null;
-            entities?: Array<{
-              category: string;
-              position: { x: number; y: number; z: number };
-              meta?: Record<string, unknown>;
-            }>;
-          },
-        );
+        const result = simRef.current.ingestSnapshot(raw);
+        const world = simRef.current.tick(0, settingsRef.current);
+        if (result.sizeChanged) setMapRev((n) => n + 1);
+        applyJoinFormat(world);
+        joinRef.current.hadLiveLocal = world.liveLocal;
+        joinRef.current.worldSize = world.worldSize;
       }
     } else {
       simRef.current.reloadMap(simRef.current.seed);
+      setMapRev((n) => n + 1);
+      applyJoinFormat(simRef.current.tick(0, settingsRef.current));
     }
   };
 
@@ -179,6 +205,7 @@ export function App() {
 
   const classic = settings.classicRadar;
   const sim = simRef.current;
+  const local = snap.localPlayer;
 
   return (
     <div className="app">
@@ -217,7 +244,7 @@ export function App() {
               <div>Networkables: {snap.networkables.toFixed(1)}ms</div>
               <div>Players: {(counts.humans + counts.sleeping).toFixed(1)}ms</div>
               <div>Entities: {snap.frameMs.toFixed(1)}ms</div>
-              <div>Aimbot: {snap.aim.elapsedMs.toFixed(2)}ms</div>
+              <div>Aimbot: 0.00ms</div>
               <br />
               <div>
                 Human: {counts.humans}, Sleeping: {counts.sleeping}, Npcs: {counts.npcs}
@@ -264,7 +291,7 @@ export function App() {
               </h3>
               <div className="esp-body">
                 <EspCanvas snapshot={snap} settings={settings} />
-                <div className="esp-dist">{snap.aim.distance ? snap.aim.distance.toFixed(0) : "—"}</div>
+                <div className="esp-dist">{snap.nearestDistance ? snap.nearestDistance.toFixed(0) : "—"}</div>
               </div>
             </section>
           )}
@@ -298,7 +325,7 @@ export function App() {
                   onClick={() => {
                     simRef.current.reloadMap(simRef.current.seed);
                     setMapRev((n) => n + 1);
-                    setView({ x: 1880, z: 1760, scale: 0.42 });
+                    applyJoinFormat(simRef.current.tick(0, settingsRef.current));
                   }}
                 >
                   Reload Map
@@ -324,16 +351,11 @@ export function App() {
                 <div className="lbl">Hack Functions ** Risky **</div>
                 {(
                   [
-                    ["allowMemory", "Allow memory features", "memory"],
                     ["visCheckChams", "Enable Visibility Check Chams", "vis"],
                     ["adminEsp", "Admin Esp", "adminEsp"],
                     ["interactiveCamera", "Interactive camera", "camera"],
-                    ["adminFlag", "Admin flag", "adminFlag"],
-                    ["shootWhileJumping", "Shoot while jumping", "jump"],
-                    ["spiderman", "Spiderman", "spiderman"],
                     ["brightNight", "Bright Night", "night"],
                     ["brightCaves", "Bright Caves", "caves"],
-                    ["instantEoka", "Instant Eoka", "eoka"],
                   ] as const
                 ).map(([key, label, helpKey]) => (
                   <label className="check" key={key}>
@@ -352,96 +374,6 @@ export function App() {
                     </button>
                   </label>
                 ))}
-              </div>
-
-              <div className="block">
-                <div className="lbl">
-                  Aim Assist <button className="readme" onClick={() => setHelp(HELP.aim)}>(Read me)</button>
-                </div>
-                <label className="check">
-                  <span>
-                    <input
-                      type="checkbox"
-                      checked={settings.aim.enabled}
-                      onChange={(e) =>
-                        patch((s) => ({ ...s, aim: { ...s.aim, enabled: e.target.checked } }))
-                      }
-                    />
-                    Aim Assist
-                  </span>
-                </label>
-                <div className="row">
-                  {(["neck", "body", "head"] as Bone[]).map((b) => (
-                    <label className="check" key={b}>
-                      <input
-                        type="radio"
-                        name="bone"
-                        checked={settings.aim.bone === b}
-                        onChange={() => patch((s) => ({ ...s, aim: { ...s.aim, bone: b } }))}
-                      />
-                      {b[0].toUpperCase() + b.slice(1)}
-                    </label>
-                  ))}
-                </div>
-                <div className="aim-row">
-                  Smooth X
-                  <input
-                    type="range" min={0.05} max={1} step={0.01}
-                    value={settings.aim.smoothX}
-                    onChange={(e) =>
-                      patch((s) => ({ ...s, aim: { ...s.aim, smoothX: Number(e.target.value) } }))
-                    }
-                  />
-                  <span className="n">{settings.aim.smoothX.toFixed(2)}</span>
-                </div>
-                <div className="aim-row">
-                  Smooth Y
-                  <input
-                    type="range" min={0.05} max={1} step={0.01}
-                    value={settings.aim.smoothY}
-                    onChange={(e) =>
-                      patch((s) => ({ ...s, aim: { ...s.aim, smoothY: Number(e.target.value) } }))
-                    }
-                  />
-                  <span className="n">{settings.aim.smoothY.toFixed(2)}</span>
-                </div>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={settings.aim.lockon}
-                    onChange={(e) =>
-                      patch((s) => ({ ...s, aim: { ...s.aim, lockon: e.target.checked } }))
-                    }
-                  />
-                  Lockon
-                </label>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={settings.aim.recoilReduction}
-                    onChange={(e) =>
-                      patch((s) => ({
-                        ...s,
-                        aim: { ...s.aim, recoilReduction: e.target.checked },
-                      }))
-                    }
-                  />
-                  Recoil Reduction
-                </label>
-                <div className="aim-row">
-                  {settings.aim.recoilIntensity.toFixed(0)}
-                  <input
-                    type="range" min={0} max={12} step={1}
-                    value={settings.aim.recoilIntensity}
-                    onChange={(e) =>
-                      patch((s) => ({
-                        ...s,
-                        aim: { ...s.aim, recoilIntensity: Number(e.target.value) },
-                      }))
-                    }
-                  />
-                  Recoil intensity
-                </div>
               </div>
             </section>
           )}

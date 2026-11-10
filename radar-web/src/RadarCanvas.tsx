@@ -1,25 +1,26 @@
 import { useEffect, useRef } from "react";
-import { sampleBiome, type Terrain } from "./mapgen";
+import { paintTerrainCanvas, type Terrain } from "./mapgen";
+import {
+  basemapUrls,
+  visibleMeters,
+  worldToScreen,
+  type RadarView,
+} from "./rustMap";
 import { passesFilter } from "./sim";
 import type { AppSettings, Entity, WorldSnapshot } from "./types";
-
-interface View {
-  x: number;
-  z: number;
-  scale: number;
-}
 
 interface Props {
   snapshot: WorldSnapshot;
   terrain: Terrain;
   settings: AppSettings;
-  view: View;
-  onView: (v: View) => void;
+  view: RadarView;
+  onView: (v: RadarView) => void;
   onHover: (e: Entity | null, sx: number, sy: number) => void;
   onClickEntity: (e: Entity) => void;
 }
 
 function colorFor(e: Entity, chams: AppSettings["chams"]): string {
+  if (e.category === "monument") return "#d8d4c8";
   if (e.category.startsWith("player")) {
     if (chams === "full-pink") return "#ff4fa3";
     if (e.admin) return "#e7c15a";
@@ -53,9 +54,13 @@ function colorFor(e: Entity, chams: AppSettings["chams"]): string {
   }
 }
 
-function shouldLabel(e: Entity, scale: number): boolean {
+function shouldLabel(e: Entity, zoomedOut: boolean, zoomedIn: boolean): boolean {
+  if (e.category === "monument") return true;
   if (e.category.startsWith("player")) return true;
-  if (scale < 0.18) return false;
+  if (zoomedOut) return false;
+  if (!zoomedIn) {
+    return e.category === "vehicle" || e.category === "helicopter" || e.category === "bradley";
+  }
   return (
     e.category === "ore-sulfur" ||
     e.category === "ore-metal" ||
@@ -64,8 +69,36 @@ function shouldLabel(e: Entity, scale: number): boolean {
     e.category === "vehicle" ||
     e.category === "sleeping-bag" ||
     e.category === "dropped" ||
-    e.category === "loot-military"
+    e.category === "loot-military" ||
+    e.category === "base"
   );
+}
+
+function drawPlayerArrow(
+  ctx: CanvasRenderingContext2D,
+  sx: number,
+  sy: number,
+  yawDeg: number,
+  fill: string,
+  stroke: string,
+  size = 11,
+): void {
+  const yaw = (yawDeg * Math.PI) / 180;
+  ctx.save();
+  ctx.translate(sx, sy);
+  ctx.rotate(yaw);
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(size * 0.62, size * 0.72);
+  ctx.lineTo(0, size * 0.28);
+  ctx.lineTo(-size * 0.62, size * 0.72);
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.4;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 export function RadarCanvas({
@@ -85,13 +118,47 @@ export function RadarCanvas({
   snapRef.current = snapshot;
   setRef.current = settings;
 
-
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     let raf = 0;
+    let terrainBmp: HTMLCanvasElement | null = null;
+    let terrainKey = "";
+    let baseImg: HTMLImageElement | null = null;
+    let baseKey = "";
+
+    const ensureTerrain = (s: AppSettings) => {
+      const key = `${terrain.seed}:${terrain.size}:${terrain.resolution}:${s.hacks.brightNight}:${s.hacks.brightCaves}`;
+      if (terrainBmp && terrainKey === key) return terrainBmp;
+      terrainBmp = paintTerrainCanvas(terrain, s.hacks.brightNight, s.hacks.brightCaves);
+      terrainKey = key;
+      return terrainBmp;
+    };
+
+    const ensureBasemap = (snap: WorldSnapshot) => {
+      const path = snap.mapImagePath ?? null;
+      const key = path ?? "";
+      if (key === baseKey) return baseImg;
+      baseKey = key;
+      baseImg = null;
+      if (!path) return null;
+      const urls = basemapUrls(path);
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      let i = 0;
+      const tryNext = () => {
+        if (i >= urls.length) return;
+        img.src = urls[i++];
+      };
+      img.onload = () => {
+        if (baseKey === key) baseImg = img;
+      };
+      img.onerror = tryNext;
+      tryNext();
+      return null;
+    };
 
     const resize = () => {
       const r = canvas.getBoundingClientRect();
@@ -104,13 +171,6 @@ export function RadarCanvas({
     const ro = new ResizeObserver(resize);
     ro.observe(canvas);
 
-    const worldToScreen = (x: number, z: number, v: View, w: number, h: number) => {
-      return {
-        sx: (x - v.x) * v.scale + w / 2,
-        sy: (z - v.z) * v.scale + h / 2,
-      };
-    };
-
     const draw = () => {
       const rect = canvas.getBoundingClientRect();
       const w = Math.max(1, rect.width);
@@ -119,38 +179,25 @@ export function RadarCanvas({
       const snap = snapRef.current;
       const s = setRef.current;
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = s.hacks.brightNight ? "#4a90aa" : "#2d7aa0";
+      ctx.fillStyle = s.hacks.brightNight ? "#1a5a72" : "#083044";
       ctx.fillRect(0, 0, w, h);
 
-      const tile = Math.max(32, 48 / Math.max(0.2, v.scale));
-      const worldLeft = v.x - w / 2 / v.scale;
-      const worldTop = v.z - h / 2 / v.scale;
-      const worldRight = v.x + w / 2 / v.scale;
-      const worldBottom = v.z + h / 2 / v.scale;
-      const pix = tile * v.scale + 1.25;
-      for (let wz = worldTop; wz < worldBottom + tile; wz += tile) {
-        for (let wx = worldLeft; wx < worldRight + tile; wx += tile) {
-          if (wx < 0 || wz < 0 || wx > snap.worldSize || wz > snap.worldSize) continue;
-          const sample = sampleBiome(terrain, wx, wz);
-          const fills = [
-            "#2d8ab4",
-            "#d6c494",
-            "#7eb056",
-            "#3d7a38",
-            "#8a8674",
-            "#e4e8e2",
-            "#b4a87a",
-            "#c4b490",
-          ];
-          ctx.fillStyle = fills[sample.biome] ?? "#7eb056";
-          if (s.hacks.brightNight && sample.biome !== 0) ctx.fillStyle = "#9ec86a";
-          const p = worldToScreen(wx, wz, v, w, h);
-          ctx.fillRect(p.sx, p.sy, pix, pix);
-        }
-      }
+      const origin = worldToScreen(0, snap.worldSize, v, w, h);
+      const corner = worldToScreen(snap.worldSize, 0, v, w, h);
+      const dw = corner.sx - origin.sx;
+      const dh = corner.sy - origin.sy;
+      const bmp = ensureTerrain(s);
+      const overlay = ensureBasemap(snap);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.drawImage(overlay ?? bmp, origin.sx, origin.sy, dw, dh);
+
+      const visM = visibleMeters(v, w, h);
+      const zoomedOut = visM > 1800;
+      const zoomedIn = visM < 1100;
 
       const local = snap.localPlayer;
-      if (local && s.aim.enabled && s.aim.fov) {
+      if (local) {
         const { sx, sy } = worldToScreen(local.position.x, local.position.z, v, w, h);
         const yaw = (local.yaw * Math.PI) / 180;
         ctx.save();
@@ -158,20 +205,22 @@ export function RadarCanvas({
         ctx.rotate(yaw);
         ctx.beginPath();
         ctx.moveTo(0, 0);
-        const reach = s.aim.fov * 6 * v.scale;
-        ctx.arc(0, 0, reach, -0.35, 0.35);
+        const reach = Math.max(28, 90 * v.scale);
+        ctx.arc(0, 0, reach, -Math.PI / 2 - 0.38, -Math.PI / 2 + 0.38);
         ctx.closePath();
-        ctx.fillStyle = "rgba(80, 220, 200, 0.08)";
+        ctx.fillStyle = "rgba(120, 220, 150, 0.12)";
         ctx.fill();
         ctx.restore();
       }
 
       const ents = snap.entities.filter((e) => {
+        if (e.category === "monument") return true;
         if (e.category.startsWith("player")) {
           if (s.chams === "not-see" && !e.admin) return false;
           if (e.admin && !s.hacks.adminEsp && e.category === "player-admin") return true;
           return true;
         }
+        if (zoomedOut) return false;
         return passesFilter(e, s);
       });
 
@@ -184,19 +233,15 @@ export function RadarCanvas({
         ctx.fillStyle = col;
         ctx.strokeStyle = "rgba(0,0,0,.55)";
         ctx.lineWidth = 1;
-        if (e.category.startsWith("player")) {
+        if (e.category === "monument") {
+          ctx.fillStyle = "rgba(160, 160, 152, 0.95)";
+          ctx.fillRect(sx - 5, sy - 5, 10, 10);
+          ctx.strokeRect(sx - 5, sy - 5, 10, 10);
+        } else if (e.category.startsWith("player")) {
           ctx.beginPath();
           ctx.arc(sx, sy, e.sleeping ? 3.5 : 4.5, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
-          if (!e.sleeping && e.yaw != null) {
-            const rad = ((e.yaw ?? 0) * Math.PI) / 180;
-            ctx.beginPath();
-            ctx.moveTo(sx, sy);
-            ctx.lineTo(sx + Math.sin(rad) * 10, sy + Math.cos(rad) * 10);
-            ctx.strokeStyle = col;
-            ctx.stroke();
-          }
         } else if (e.category === "vehicle" || e.category === "sleeping-bag") {
           ctx.fillRect(sx - 4, sy - 4, 8, 8);
         } else {
@@ -204,11 +249,11 @@ export function RadarCanvas({
           ctx.arc(sx, sy, 3, 0, Math.PI * 2);
           ctx.fill();
         }
-        if (!s.classicRadar && shouldLabel(e, v.scale) && !hidden) {
-          ctx.font = "11px Segoe UI, sans-serif";
+        if (!s.classicRadar && shouldLabel(e, zoomedOut, zoomedIn) && !hidden) {
+          ctx.font = e.category === "monument" ? "bold 12px Segoe UI, sans-serif" : "11px Segoe UI, sans-serif";
           ctx.lineWidth = 3;
           ctx.strokeStyle = "rgba(0,0,0,.55)";
-          ctx.fillStyle = col;
+          ctx.fillStyle = e.category === "monument" ? "#f0ead8" : col;
           ctx.strokeText(e.label, sx + 6, sy - 6);
           ctx.fillText(e.label, sx + 6, sy - 6);
         }
@@ -217,30 +262,7 @@ export function RadarCanvas({
 
       if (local) {
         const { sx, sy } = worldToScreen(local.position.x, local.position.z, v, w, h);
-        ctx.fillStyle = "#5dff7a";
-        ctx.beginPath();
-        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#062";
-        ctx.stroke();
-        const rad = (local.yaw * Math.PI) / 180;
-        ctx.beginPath();
-        ctx.moveTo(sx, sy);
-        ctx.lineTo(sx + Math.sin(rad) * 14, sy + Math.cos(rad) * 14);
-        ctx.strokeStyle = "#5dff7a";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      if (snap.aim.world && local) {
-        const a = worldToScreen(local.position.x, local.position.z, v, w, h);
-        const b = worldToScreen(snap.aim.world.x, snap.aim.world.z, v, w, h);
-        ctx.strokeStyle = "rgba(255, 70, 70, 0.85)";
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(a.sx, a.sy);
-        ctx.lineTo(b.sx, b.sy);
-        ctx.stroke();
+        drawPlayerArrow(ctx, sx, sy, local.yaw, "#5dff7a", "#063018", 12);
       }
 
       raf = requestAnimationFrame(draw);
@@ -256,9 +278,8 @@ export function RadarCanvas({
       let best: Entity | null = null;
       let bestD = 14;
       for (const e of snap.entities) {
-        const sx = (e.position.x - v.x) * v.scale + rect.width / 2;
-        const sy = (e.position.z - v.z) * v.scale + rect.height / 2;
-        const d = Math.hypot(sx - mx, sy - my);
+        const p = worldToScreen(e.position.x, e.position.z, v, rect.width, rect.height);
+        const d = Math.hypot(p.sx - mx, p.sy - my);
         if (d < bestD) {
           bestD = d;
           best = e;
@@ -267,20 +288,26 @@ export function RadarCanvas({
       return best;
     };
 
-    let drag: { x: number; z: number; px: number; py: number } | null = null;
+    let drag: { x: number; z: number; px: number; py: number; pan: boolean } | null = null;
     const down = (ev: PointerEvent) => {
       if (ev.button !== 0) return;
       canvas.setPointerCapture(ev.pointerId);
-      drag = { x: viewRef.current.x, z: viewRef.current.z, px: ev.clientX, py: ev.clientY };
+      drag = {
+        x: viewRef.current.x,
+        z: viewRef.current.z,
+        px: ev.clientX,
+        py: ev.clientY,
+        pan: setRef.current.hacks.interactiveCamera,
+      };
     };
     const move = (ev: PointerEvent) => {
       const rect = canvas.getBoundingClientRect();
       const mx = ev.clientX - rect.left;
       const my = ev.clientY - rect.top;
-      if (drag) {
+      if (drag?.pan) {
         const dx = (ev.clientX - drag.px) / viewRef.current.scale;
-        const dz = (ev.clientY - drag.py) / viewRef.current.scale;
-        onView({ ...viewRef.current, x: drag.x - dx, z: drag.z - dz });
+        const dy = (ev.clientY - drag.py) / viewRef.current.scale;
+        onView({ ...viewRef.current, x: drag.x - dx, z: drag.z + dy });
       } else {
         onHover(hit(mx, my), ev.clientX, ev.clientY);
       }
@@ -297,7 +324,7 @@ export function RadarCanvas({
     };
     const wheel = (ev: WheelEvent) => {
       ev.preventDefault();
-      const next = Math.max(0.08, Math.min(2.4, viewRef.current.scale * (ev.deltaY > 0 ? 0.9 : 1.1)));
+      const next = Math.max(0.08, Math.min(2.8, viewRef.current.scale * (ev.deltaY > 0 ? 0.9 : 1.1)));
       onView({ ...viewRef.current, scale: next });
     };
     const leave = () => onHover(null, 0, 0);
@@ -319,7 +346,14 @@ export function RadarCanvas({
     };
   }, [onClickEntity, onHover, onView, terrain]);
 
-  return <canvas ref={ref} style={{ width: "100%", height: "100%", display: "block", touchAction: "none" }} />;
+  return (
+    <canvas
+      ref={ref}
+      data-map="rust"
+      data-grid="az"
+      style={{ width: "100%", height: "100%", display: "block", touchAction: "none" }}
+    />
+  );
 }
 
 export function EspCanvas({
@@ -373,7 +407,7 @@ export function EspCanvas({
         const rx = dx * Math.cos(-yaw) - dz * Math.sin(-yaw);
         const rz = dx * Math.sin(-yaw) + dz * Math.cos(-yaw);
         const sx = cx + rx * scale;
-        const sy = cy + rz * scale;
+        const sy = cy - rz * scale;
         if (sx < 2 || sy < 2 || sx > w - 2 || sy > h - 2) continue;
         ctx.fillStyle = e.admin ? "#e7c15a" : e.npc ? "#6adf6a" : e.sleeping ? "#c9a0ff" : "#e05252";
         if (settings.chams === "full-pink" && e.category.startsWith("player")) ctx.fillStyle = "#ff4fa3";
@@ -381,14 +415,11 @@ export function EspCanvas({
         ctx.arc(sx, sy, 2.4, 0, Math.PI * 2);
         ctx.fill();
       }
-      ctx.fillStyle = "#5dff7a";
-      ctx.beginPath();
-      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
-      ctx.fill();
+      drawPlayerArrow(ctx, cx, cy, 0, "#5dff7a", "#063018", 7);
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
   }, []);
-  return <canvas ref={ref} />;
+  return <canvas ref={ref} data-esp="readonly" />;
 }

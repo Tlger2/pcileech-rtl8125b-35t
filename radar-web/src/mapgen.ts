@@ -9,6 +9,13 @@ export interface Terrain {
   biome: Uint8Array;
 }
 
+export interface MonumentSpec {
+  name: string;
+  nx: number;
+  nz: number;
+  radius: number;
+}
+
 export const BIOME_OCEAN = 0;
 export const BIOME_SAND = 1;
 export const BIOME_GRASS = 2;
@@ -17,6 +24,18 @@ export const BIOME_ROCK = 4;
 export const BIOME_SNOW = 5;
 export const BIOME_ROAD = 6;
 export const BIOME_MONUMENT = 7;
+export const BIOME_DESERT = 8;
+
+export const RUST_MONUMENTS: MonumentSpec[] = [
+  { name: "Airfield", nx: 0.58, nz: 0.44, radius: 0.038 },
+  { name: "Launch Site", nx: 0.7, nz: 0.62, radius: 0.042 },
+  { name: "Military Tunnel", nx: 0.4, nz: 0.52, radius: 0.03 },
+  { name: "Harbor", nx: 0.52, nz: 0.7, radius: 0.032 },
+  { name: "Train Yard", nx: 0.33, nz: 0.38, radius: 0.03 },
+  { name: "Power Plant", nx: 0.66, nz: 0.36, radius: 0.034 },
+  { name: "Outpost", nx: 0.48, nz: 0.48, radius: 0.02 },
+  { name: "Satellite Dish", nx: 0.28, nz: 0.58, radius: 0.024 },
+];
 
 function landField(nx: number, ny: number): number {
   const d1 = Math.hypot(nx - 0.46, ny - 0.4) / 0.36;
@@ -43,6 +62,7 @@ export function generateTerrain(size: number, seed: number, resolution = 768): T
       const ny = y / (resolution - 1);
       const field = landField(nx + jitter, ny - jitter * 0.4);
       const h = fbm(nx * 8 + seed * 0.01, ny * 8, 4);
+      const arid = fbm(nx * 2.2 + 4, ny * 2.2, 3);
       height[i] = field * 0.65 + h * 0.35;
       const isLand = field > 0.34;
       land[i] = isLand ? 1 : 0;
@@ -50,10 +70,14 @@ export function generateTerrain(size: number, seed: number, resolution = 768): T
         biome[i] = BIOME_OCEAN;
       } else if (field < 0.4) {
         biome[i] = BIOME_SAND;
+      } else if (ny > 0.74 && height[i] > 0.5) {
+        biome[i] = BIOME_SNOW;
       } else if (height[i] > 0.78) {
         biome[i] = BIOME_SNOW;
       } else if (height[i] > 0.68) {
         biome[i] = BIOME_ROCK;
+      } else if (arid > 0.62 && ny < 0.42 && field > 0.42) {
+        biome[i] = BIOME_DESERT;
       } else if (h > 0.58 && field > 0.48) {
         biome[i] = BIOME_FOREST;
       } else {
@@ -67,22 +91,16 @@ export function generateTerrain(size: number, seed: number, resolution = 768): T
 }
 
 function paintRoadsAndMonuments(biome: Uint8Array, land: Uint8Array, res: number): void {
-  const monuments = [
-    { x: 0.58, y: 0.44, r: 0.035 },
-    { x: 0.7, y: 0.62, r: 0.04 },
-    { x: 0.4, y: 0.52, r: 0.028 },
-    { x: 0.52, y: 0.7, r: 0.03 },
-  ];
-  for (const m of monuments) {
-    const cx = Math.floor(m.x * res);
-    const cy = Math.floor(m.y * res);
-    const rr = Math.floor(m.r * res);
+  for (const m of RUST_MONUMENTS) {
+    const cx = Math.floor(m.nx * res);
+    const cy = Math.floor(m.nz * res);
+    const rr = Math.max(2, Math.floor(m.radius * res));
     for (let y = cy - rr; y <= cy + rr; y++) {
       for (let x = cx - rr; x <= cx + rr; x++) {
         if (x < 0 || y < 0 || x >= res || y >= res) continue;
         const i = y * res + x;
         if (!land[i]) continue;
-        if (Math.hypot(x - cx, y - cy) <= rr) biome[i] = BIOME_MONUMENT;
+        biome[i] = BIOME_MONUMENT;
       }
     }
   }
@@ -92,17 +110,23 @@ function paintRoadsAndMonuments(biome: Uint8Array, land: Uint8Array, res: number
     [0.58, 0.44, 0.7, 0.62],
     [0.52, 0.7, 0.58, 0.44],
     [0.32, 0.6, 0.4, 0.52],
+    [0.33, 0.38, 0.48, 0.48],
+    [0.48, 0.48, 0.66, 0.36],
+    [0.28, 0.58, 0.4, 0.52],
+    [0.7, 0.62, 0.66, 0.36],
+    [0.4, 0.52, 0.52, 0.7],
   ];
   for (const [x0, y0, x1, y1] of roads) {
-    const steps = 220;
+    const steps = 280;
     for (let s = 0; s <= steps; s++) {
       const t = s / steps;
       const px = lerp(x0, x1, t);
       const py = lerp(y0, y1, t);
       const cx = Math.floor(px * res);
       const cy = Math.floor(py * res);
-      for (let oy = -1; oy <= 1; oy++) {
-        for (let ox = -1; ox <= 1; ox++) {
+      for (let oy = -2; oy <= 2; oy++) {
+        for (let ox = -2; ox <= 2; ox++) {
+          if (Math.abs(ox) === 2 && Math.abs(oy) === 2) continue;
           const x = cx + ox;
           const y = cy + oy;
           if (x < 0 || y < 0 || x >= res || y >= res) continue;
@@ -161,37 +185,56 @@ export function lineOfSight(
   return true;
 }
 
-const OCEAN = [42, 118, 150];
-const DEEP = [28, 86, 118];
-const SAND = [214, 196, 148];
-const GRASS = [126, 168, 86];
-const GRASS2 = [92, 148, 68];
-const FOREST = [58, 112, 52];
-const ROCK = [132, 128, 110];
-const SNOW = [232, 236, 230];
-const ROAD = [168, 156, 118];
-const MON = [176, 164, 128];
+const DEEP = [8, 42, 58];
+const OCEAN = [18, 72, 92];
+const SHALLOW = [36, 102, 118];
+const SAND = [210, 188, 132];
+const GRASS = [110, 132, 58];
+const GRASS2 = [86, 112, 48];
+const FOREST = [46, 78, 36];
+const ROCK = [118, 114, 104];
+const SNOW = [214, 220, 216];
+const ROAD = [110, 84, 52];
+const MON = [138, 138, 132];
+const DESERT = [186, 154, 92];
 
 function mix(a: number[], b: number[], t: number): number[] {
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
 }
 
-export function biomeFill(biome: number, height: number, brightNight: boolean): string {
-  const lift = brightNight ? 18 : 0;
+export function biomeRgb(
+  biome: number,
+  height: number,
+  brightNight: boolean,
+  brightCaves: boolean,
+): [number, number, number] {
+  const lift = brightNight ? 22 : 0;
+  const cave = brightCaves && biome !== BIOME_OCEAN && height < 0.42 ? 16 : 0;
   let col: number[];
-  if (biome === BIOME_OCEAN) col = mix(DEEP, OCEAN, clamp01(height * 1.4));
+  if (biome === BIOME_OCEAN) col = mix(DEEP, height < 0.28 ? OCEAN : SHALLOW, clamp01(height * 1.6));
   else if (biome === BIOME_SAND) col = SAND;
+  else if (biome === BIOME_DESERT) col = mix(DESERT, SAND, height * 0.35);
   else if (biome === BIOME_FOREST) col = mix(FOREST, GRASS2, height);
   else if (biome === BIOME_ROCK) col = ROCK;
   else if (biome === BIOME_SNOW) col = SNOW;
   else if (biome === BIOME_ROAD) col = ROAD;
   else if (biome === BIOME_MONUMENT) col = MON;
   else col = mix(GRASS2, GRASS, height);
-  const shade = 0.82 + height * 0.28;
-  const r = Math.min(255, col[0] * shade + lift);
-  const g = Math.min(255, col[1] * shade + lift);
-  const b = Math.min(255, col[2] * shade + lift * 0.6);
-  return `rgb(${r | 0},${g | 0},${b | 0})`;
+  const shade = biome === BIOME_OCEAN ? 0.88 + height * 0.18 : 0.78 + height * 0.32;
+  const r = Math.min(255, col[0] * shade + lift + cave);
+  const g = Math.min(255, col[1] * shade + lift + cave);
+  const b = Math.min(255, col[2] * shade + lift * 0.45);
+  return [r | 0, g | 0, b | 0];
+}
+
+export function biomeFill(
+  biome: number,
+  height: number,
+  brightNight: boolean,
+  brightCaves = false,
+): string {
+  const [r, g, b] = biomeRgb(biome, height, brightNight, brightCaves);
+  return `rgb(${r},${g},${b})`;
 }
 
 export function sampleBiome(terrain: Terrain, x: number, z: number): { biome: number; height: number } {
@@ -216,4 +259,33 @@ export function randomLandPoint(
     if (isLandAt(terrain, x, z)) return { x, z };
   }
   return null;
+}
+
+export function paintTerrainCanvas(
+  terrain: Terrain,
+  brightNight: boolean,
+  brightCaves: boolean,
+): HTMLCanvasElement {
+  const res = terrain.resolution;
+  const canvas = document.createElement("canvas");
+  canvas.width = res;
+  canvas.height = res;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return canvas;
+  const img = ctx.createImageData(res, res);
+  const data = img.data;
+  for (let py = 0; py < res; py++) {
+    const tz = res - 1 - py;
+    for (let px = 0; px < res; px++) {
+      const i = tz * res + px;
+      const [r, g, b] = biomeRgb(terrain.biome[i], terrain.height[i], brightNight, brightCaves);
+      const o = (py * res + px) * 4;
+      data[o] = r;
+      data[o + 1] = g;
+      data[o + 2] = b;
+      data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
 }
