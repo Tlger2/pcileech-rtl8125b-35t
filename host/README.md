@@ -8,13 +8,16 @@ Python driver that speaks the FT601 framed protocol used by `pcie_custom_endpoin
 pip install pyusb
 ```
 
-The FT601 is a SuperSpeed FIFO (`0403:601F`), not an FT232 UART. The host
-opens it with pyusb bulk transfers on **interface 0 (MI_00)**.
+The FT601 is a SuperSpeed FIFO (`0403:601F`), not an FT232 UART. After
+`set_configuration` the host walks **every interface and altsetting** and
+binds the first bulk IN+OUT pair, preferring **OUT 0x02 + IN 0x82**.
 
-On Windows: bind **WinUSB** to `VID 0x0403`, `PID 0x601F`, **MI_00** with
-[Zadig](https://zadig.akeo.ie/), and put `libusb-1.0.dll` on PATH (or next
-to `python.exe`). On Linux, install `libusb-1.0` and add a udev rule for
-`0403:601f` (or run in the `plugdev` group / with `sudo`).
+On Windows: bind **WinUSB** with [Zadig](https://zadig.akeo.ie/) to
+`VID 0x0403`, `PID 0x601F` on the interface that has those bulk pipes
+(often MI_00; if open says `Zadig WinUSB on that interface`, bind that
+MI_xx instead), and put `libusb-1.0.dll` on PATH (or next to `python.exe`).
+On Linux, install `libusb-1.0` and add a udev rule for `0403:601f` (or
+run in the `plugdev` group / with `sudo`).
 
 ## Use
 
@@ -26,12 +29,15 @@ python ft601_client.py --selftest
 ```
 
 On the laptop USB-connected to the 35T (`lsusb` shows `0403:601f`).
-`--identify` sets `usb: true` when pyusb finds `0403:601F` (and tries to
-open MI_00). `--ping` bulk-writes MAGIC+KEEPALIVE on the WinUSB bulk OUT
-endpoint and waits for an ACK — not `ftdi://`.
+`--identify` sets `usb: true` when pyusb finds `0403:601F`. `--usb-dump`
+prints cfg/iface/alt/ep descriptors and exits 0 if the device is found.
+`--ping` bulk-writes MAGIC+KEEPALIVE on the chosen bulk OUT endpoint and
+waits for an ACK — not `ftdi://`. If open fails, the client prints the
+descriptor dump (do not fail silently).
 
 ```
 python3 ft601_client.py --selftest
+python3 ft601_client.py --usb-dump
 python3 ft601_client.py --identify
 python3 ft601_client.py --ping
 python3 ft601_client.py --write 0x04 0x00001000

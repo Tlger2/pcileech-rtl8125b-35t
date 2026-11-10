@@ -12,7 +12,9 @@ canonical, on-wire byte is the substituted value. The table is bijective
 so decode_opcode(encode_opcode(x)) == x for every defined x.
 
 Transport: FT601 SuperSpeed FIFO via pyusb/libusb WinUSB bulk transfers
-(VID 0x0403, PID 0x601F, interface 0 / MI_00). The FT601 is not an
+(VID 0x0403, PID 0x601F). After set_configuration the client walks every
+interface and altsetting and binds the first bulk IN+OUT pair, preferring
+OUT 0x02 + IN 0x82 (PCILeech/CaptainDMA). The FT601 is not an
 FT232/FT2232 UART; pyftdi's Ftdi product table has no 0x601F and cannot
 open it.
 """
@@ -20,6 +22,7 @@ open it.
 from __future__ import annotations
 
 import struct
+import sys
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterable, Optional
@@ -156,13 +159,19 @@ def _words(blob: bytes) -> list[int]:
 # FT601 transport (pyusb WinUSB bulk, not pyftdi UART)
 # ------------------------------------------------------------------
 _LIBUSB_HINT = (
-    "On Windows bind WinUSB to 0403:601F MI_00 (Zadig) and put "
-    "libusb-1.0.dll on PATH; on Linux install libusb-1.0."
+    "On Windows bind WinUSB to 0403:601F (Zadig; the interface with bulk "
+    "pipes, often MI_00) and put libusb-1.0.dll on PATH; on Linux install "
+    "libusb-1.0."
 )
 
 # FT601 EEPROM layouts: 1 / 2 / 4 FIFO channels, usually bConfigurationValue 1.
 _FT601_CONFIG_VALUES = (1, 2, 3, 4)
-_FT601_INTERFACE = 0  # MI_00
+_FT601_INTERFACE = 0  # MI_00 default; open() walks every iface/alt
+_PREF_EP_OUT = 0x02
+_PREF_EP_IN = 0x82
+_EP_TYPE_MASK = 0x03
+_EP_DIR_MASK = 0x80
+_XFER_NAMES = {0: "ctrl", 1: "iso", 2: "bulk", 3: "int"}
 
 
 def _is_usb_timeout(exc: BaseException) -> bool:
@@ -237,65 +246,209 @@ def _configure_ft601(dev) -> None:
         ) from exc
 
 
+def _usb_error_type():
+    if _HAVE_PYUSB:
+        return getattr(usb.core, "USBError", Exception)
+    return Exception
+
+
+def _format_descriptor_dump(dev) -> str:
+    """Compact cfg/iface/alt/ep dump for pasting when open fails."""
+    lines: list[str] = []
+    try:
+        configs = list(dev)
+    except Exception as exc:
+        return f"(descriptor walk failed: {exc})"
+    if not configs:
+        return "(no USB configurations)"
+    for cfg in configs:
+        try:
+            cfg_val = int(cfg.bConfigurationValue)
+        except Exception:
+            cfg_val = -1
+        try:
+            intfs = list(cfg)
+        except Exception as exc:
+            lines.append(f"cfg={cfg_val} (interface walk failed: {exc})")
+            continue
+        if not intfs:
+            lines.append(f"cfg={cfg_val} (no interfaces)")
+            continue
+        for intf in intfs:
+            try:
+                iface = int(intf.bInterfaceNumber)
+                alt = int(intf.bAlternateSetting)
+            except Exception:
+                iface, alt = -1, -1
+            try:
+                eps = list(intf)
+            except Exception as exc:
+                lines.append(
+                    f"cfg={cfg_val} iface={iface} alt={alt} (ep walk failed: {exc})"
+                )
+                continue
+            if not eps:
+                lines.append(f"cfg={cfg_val} iface={iface} alt={alt} (no endpoints)")
+                continue
+            for ep in eps:
+                addr = int(getattr(ep, "bEndpointAddress", 0))
+                bm = int(getattr(ep, "bmAttributes", 0))
+                maxpkt = int(getattr(ep, "wMaxPacketSize", 0))
+                typ = _XFER_NAMES.get(bm & _EP_TYPE_MASK, str(bm & _EP_TYPE_MASK))
+                lines.append(
+                    f"cfg={cfg_val} iface={iface} alt={alt} "
+                    f"ep=0x{addr:02x} type={typ} maxpkt={maxpkt}"
+                )
+    return "\n".join(lines)
+
+
+def _print_descriptor_dump(dev) -> str:
+    dump = _format_descriptor_dump(dev)
+    print(dump, file=sys.stderr)
+    return dump
+
+
 def _claim_interface(dev, intf_num: int) -> None:
     try:
         if bool(dev.is_kernel_driver_active(intf_num)):
             dev.detach_kernel_driver(intf_num)
-    except (NotImplementedError, ValueError, usb.core.USBError):
+    except (NotImplementedError, ValueError, _usb_error_type()):
         pass
     try:
         usb.util.claim_interface(dev, intf_num)
-    except usb.core.USBError as exc:
+    except Exception as exc:
+        dump = _print_descriptor_dump(dev)
+        if intf_num != 0:
+            raise RuntimeError(
+                f"could not claim FT601 interface {intf_num} "
+                f"(Zadig WinUSB on that interface): {exc}. {_LIBUSB_HINT}\n{dump}"
+            ) from exc
         raise RuntimeError(
             f"could not claim FT601 interface {intf_num} (MI_00): {exc}. "
-            + _LIBUSB_HINT
+            f"{_LIBUSB_HINT}\n{dump}"
         ) from exc
 
 
 def _bulk_pair(intf):
-    ep_out = ep_in = None
+    """Return (bulk_out, bulk_in) on this iface/alt, preferring 0x02/0x82."""
+    outs: list = []
+    ins: list = []
     for ep in intf:
-        if usb.util.endpoint_type(ep.bmAttributes) != usb.util.ENDPOINT_TYPE_BULK:
+        bm = int(getattr(ep, "bmAttributes", 0))
+        if (bm & _EP_TYPE_MASK) != 2:
             continue
-        direction = usb.util.endpoint_direction(ep.bEndpointAddress)
-        if direction == usb.util.ENDPOINT_OUT and ep_out is None:
-            ep_out = ep
-        elif direction == usb.util.ENDPOINT_IN and ep_in is None:
-            ep_in = ep
+        addr = int(ep.bEndpointAddress)
+        if addr & _EP_DIR_MASK:
+            ins.append(ep)
+        else:
+            outs.append(ep)
+    if not outs or not ins:
+        return None, None
+    ep_out = next(
+        (e for e in outs if int(e.bEndpointAddress) == _PREF_EP_OUT), outs[0],
+    )
+    ep_in = next(
+        (e for e in ins if int(e.bEndpointAddress) == _PREF_EP_IN), ins[0],
+    )
     return ep_out, ep_in
 
 
-def _select_bulk_interface(dev, intf_num: int):
-    cfg = dev.get_active_configuration()
-    matches = []
+def _pair_is_preferred(ep_out, ep_in) -> bool:
+    return (
+        int(ep_out.bEndpointAddress) == _PREF_EP_OUT
+        and int(ep_in.bEndpointAddress) == _PREF_EP_IN
+    )
+
+
+def _candidates_from_cfg(cfg):
+    found = []
     for intf in cfg:
-        if intf.bInterfaceNumber != intf_num:
-            continue
         ep_out, ep_in = _bulk_pair(intf)
         if ep_out is not None and ep_in is not None:
-            matches.append((intf, ep_out, ep_in))
-    if not matches:
-        raise RuntimeError(
-            f"FT601 has no bulk IN+OUT pair on interface {intf_num} (MI_00)"
-        )
-    intf, ep_out, ep_in = matches[0]
-    if intf.bAlternateSetting:
+            found.append((intf, ep_out, ep_in))
+    return found
+
+
+def _pick_candidate(candidates):
+    for item in candidates:
+        if _pair_is_preferred(item[1], item[2]):
+            return item
+    return candidates[0]
+
+
+def _select_from_active(dev):
+    try:
+        cfg = dev.get_active_configuration()
+    except Exception:
+        return None
+    cands = _candidates_from_cfg(cfg)
+    if not cands:
+        return None
+    return _pick_candidate(cands)
+
+
+def _select_bulk_interface(dev):
+    """Walk every interface/altsetting; first bulk IN+OUT, prefer 0x02/0x82.
+
+    If the active configuration has no pair, try the other
+    bConfigurationValue values (FT601 FIFO often lives on cfg 1 vs 0).
+    """
+    chosen = _select_from_active(dev)
+    if chosen is not None:
+        return chosen
+
+    values: list[int] = []
+    try:
+        values = [int(cfg.bConfigurationValue) for cfg in dev]
+    except Exception:
+        values = []
+    active_val = None
+    try:
+        active_val = int(dev.get_active_configuration().bConfigurationValue)
+    except Exception:
+        pass
+    usb_err = _usb_error_type()
+    for value in list(dict.fromkeys([*values, *_FT601_CONFIG_VALUES])):
+        if value == active_val:
+            continue
         try:
-            dev.set_interface_altsetting(
-                interface=intf_num,
-                alternate_setting=intf.bAlternateSetting,
-            )
-        except usb.core.USBError:
-            pass
-    return intf, ep_out, ep_in
+            dev.set_configuration(value)
+        except usb_err:
+            continue
+        except Exception:
+            continue
+        chosen = _select_from_active(dev)
+        if chosen is not None:
+            return chosen
+
+    dump = _print_descriptor_dump(dev)
+    raise RuntimeError(
+        "FT601 has no bulk IN+OUT pair on any interface/altsetting.\n" + dump
+    )
+
+
+def _apply_altsetting(dev, intf) -> None:
+    alt = int(intf.bAlternateSetting)
+    iface = int(intf.bInterfaceNumber)
+    if alt == 0:
+        return
+    try:
+        dev.set_interface_altsetting(interface=iface, alternate_setting=alt)
+    except Exception as exc:
+        dump = _print_descriptor_dump(dev)
+        raise RuntimeError(
+            f"FT601 set_interface altsetting {alt} on interface {iface} "
+            f"failed ({exc}).\n{dump}"
+        ) from exc
 
 
 class FT601Client:
     """
     WinUSB/libusb bulk FIFO client for FT601 (VID 0x0403, PID 0x601F).
 
-    Claims interface 0 (MI_00), discovers the bulk OUT + bulk IN endpoints,
-    and uses those for framed MAGIC I/O. Not a UART; do not open via
+    After set_configuration, walks every interface/altsetting for a bulk
+    IN+OUT pair (preferring 0x02/0x82), claims that interface, and uses
+    those endpoints for framed MAGIC I/O. Not a UART; do not open via
     pyftdi / ftdi://.
 
     Usage:
@@ -334,16 +487,21 @@ class FT601Client:
         if self._dev is not None:
             return self
         dev = _find_ft601(self._vid, self._pid, self._index)
+        claimed: Optional[int] = None
         try:
             _configure_ft601(dev)
-            _claim_interface(dev, self.INTERFACE)
-            _intf, ep_out, ep_in = _select_bulk_interface(dev, self.INTERFACE)
+            intf, ep_out, ep_in = _select_bulk_interface(dev)
+            intf_num = int(intf.bInterfaceNumber)
+            _claim_interface(dev, intf_num)
+            claimed = intf_num
+            _apply_altsetting(dev, intf)
         except Exception:
             if _HAVE_PYUSB:
-                try:
-                    usb.util.release_interface(dev, self.INTERFACE)
-                except Exception:
-                    pass
+                if claimed is not None:
+                    try:
+                        usb.util.release_interface(dev, claimed)
+                    except Exception:
+                        pass
                 try:
                     usb.util.dispose_resources(dev)
                 except Exception:
@@ -352,7 +510,7 @@ class FT601Client:
         self._dev = dev
         self._ep_out = int(ep_out.bEndpointAddress)
         self._ep_in = int(ep_in.bEndpointAddress)
-        self._intf_num = int(_intf.bInterfaceNumber)
+        self._intf_num = int(intf.bInterfaceNumber)
         return self
 
     def close(self) -> None:
@@ -804,51 +962,173 @@ def _selftest() -> None:
     assert "WinUSB" in _LIBUSB_HINT
     assert "ftdi://" not in _LIBUSB_HINT
 
-    # open() claims MI_00 and binds bulk endpoints (mocked; no USB hardware).
+    # Descriptor walk: skip iface 0 (no bulk), prefer 0x02/0x82 on iface 1 alt 1.
     class _Ep:
-        def __init__(self, addr: int):
+        def __init__(self, addr: int, xfer: int = 2, maxpkt: int = 1024):
             self.bEndpointAddress = addr
+            self.bmAttributes = xfer
+            self.wMaxPacketSize = maxpkt
 
     class _Intf:
-        bInterfaceNumber = 0
-        bAlternateSetting = 0
+        def __init__(self, num: int, alt: int, eps: list):
+            self.bInterfaceNumber = num
+            self.bAlternateSetting = alt
+            self.bNumEndpoints = len(eps)
+            self._eps = list(eps)
 
-    sentinel = _FakeUsbDev()
-    calls: list = []
+        def __iter__(self):
+            return iter(self._eps)
 
-    def fake_find(vid, pid, index=0):
-        calls.append(("find", vid, pid, index))
-        return sentinel
+    class _Cfg:
+        def __init__(self, value: int, intfs: list):
+            self.bConfigurationValue = value
+            self._intfs = list(intfs)
 
-    def fake_cfg(dev):
-        calls.append(("cfg", dev))
+        def __iter__(self):
+            return iter(self._intfs)
 
-    def fake_claim(dev, n):
-        calls.append(("claim", n))
+    class _DescDev:
+        def __init__(self, cfgs: list, active: int = 0):
+            self._cfgs = list(cfgs)
+            self._active = active
+            self.claimed: list[int] = []
+            self.alts: list[tuple[int, int]] = []
+            self.set_cfgs: list = []
 
-    def fake_sel(dev, n):
-        calls.append(("sel", n))
-        return _Intf(), _Ep(0x02), _Ep(0x81)
+        def __iter__(self):
+            return iter(self._cfgs)
+
+        def set_configuration(self, value=None):
+            self.set_cfgs.append(value)
+            if value is None:
+                self._active = 0
+                return
+            for i, cfg in enumerate(self._cfgs):
+                if int(cfg.bConfigurationValue) == int(value):
+                    self._active = i
+                    return
+            raise RuntimeError(f"no configuration {value}")
+
+        def get_active_configuration(self):
+            return self._cfgs[self._active]
+
+        def set_interface_altsetting(self, interface, alternate_setting):
+            self.alts.append((int(interface), int(alternate_setting)))
+
+        def is_kernel_driver_active(self, n):
+            return False
+
+    dump_dev = _DescDev([_Cfg(1, [
+        _Intf(0, 0, [_Ep(0x81, xfer=3, maxpkt=64)]),  # interrupt only
+        _Intf(1, 0, [_Ep(0x01), _Ep(0x81)]),
+        _Intf(1, 1, [_Ep(0x02), _Ep(0x82), _Ep(0x83, xfer=3)]),
+    ])])
+    dump = _format_descriptor_dump(dump_dev)
+    assert "cfg=1 iface=0 alt=0 ep=0x81 type=int maxpkt=64" in dump
+    assert "cfg=1 iface=1 alt=0 ep=0x01 type=bulk maxpkt=1024" in dump
+    assert "cfg=1 iface=1 alt=1 ep=0x02 type=bulk maxpkt=1024" in dump
+    assert "cfg=1 iface=1 alt=1 ep=0x82 type=bulk maxpkt=1024" in dump
+
+    chosen = _select_bulk_interface(dump_dev)
+    assert chosen[0].bInterfaceNumber == 1
+    assert chosen[0].bAlternateSetting == 1
+    assert int(chosen[1].bEndpointAddress) == 0x02
+    assert int(chosen[2].bEndpointAddress) == 0x82
+
+    # First bulk pair when 0x02/0x82 is absent (0x01/0x81).
+    only_01 = _DescDev([_Cfg(1, [
+        _Intf(0, 0, []),
+        _Intf(1, 0, [_Ep(0x01), _Ep(0x81)]),
+    ])])
+    chosen_01 = _select_bulk_interface(only_01)
+    assert chosen_01[0].bInterfaceNumber == 1
+    assert int(chosen_01[1].bEndpointAddress) == 0x01
+    assert int(chosen_01[2].bEndpointAddress) == 0x81
+
+    # Bulk pair on cfg 2 after active cfg 1 has none.
+    cfg_switch = _DescDev([
+        _Cfg(1, [_Intf(0, 0, [])]),
+        _Cfg(2, [_Intf(0, 0, [_Ep(0x02), _Ep(0x82)])]),
+    ])
+    chosen_cfg = _select_bulk_interface(cfg_switch)
+    assert int(cfg_switch.get_active_configuration().bConfigurationValue) == 2
+    assert int(chosen_cfg[1].bEndpointAddress) == 0x02
+    assert int(chosen_cfg[2].bEndpointAddress) == 0x82
+
+    empty = _DescDev([_Cfg(1, [_Intf(0, 0, [_Ep(0x81, xfer=3)])])])
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+    err = io.StringIO()
+    try:
+        with redirect_stderr(err):
+            _select_bulk_interface(empty)
+        raise AssertionError("expected no-bulk error")
+    except RuntimeError as exc:
+        msg = str(exc)
+        assert "no bulk IN+OUT pair" in msg
+        assert "cfg=1 iface=0 alt=0 ep=0x81 type=int maxpkt=1024" in msg
+        assert "cfg=1 iface=0 alt=0 ep=0x81 type=int maxpkt=1024" in err.getvalue()
+
+    if _HAVE_PYUSB:
+        class _ClaimDev:
+            def is_kernel_driver_active(self, n):
+                return False
+
+        orig_claim = usb.util.claim_interface
+
+        def boom(_dev, n):
+            raise usb.core.USBError("access denied")
+
+        usb.util.claim_interface = boom
+        try:
+            try:
+                with redirect_stderr(io.StringIO()):
+                    _claim_interface(_ClaimDev(), 1)
+                raise AssertionError("expected claim failure")
+            except RuntimeError as exc:
+                assert "Zadig WinUSB on that interface" in str(exc)
+                assert "interface 1" in str(exc)
+        finally:
+            usb.util.claim_interface = orig_claim
 
     g = globals()
-    orig_fns = {k: g[k] for k in (
-        "_find_ft601", "_configure_ft601", "_claim_interface",
-        "_select_bulk_interface",
-    )}
+    orig_find = g["_find_ft601"]
+    g["_find_ft601"] = lambda *a, **k: dump_dev
     try:
-        g["_find_ft601"] = fake_find
-        g["_configure_ft601"] = fake_cfg
-        g["_claim_interface"] = fake_claim
-        g["_select_bulk_interface"] = fake_sel
-        opened = FT601Client().open()
-        assert opened._dev is sentinel
-        assert opened._ep_out == 0x02 and opened._ep_in == 0x81
-        assert opened._intf_num == 0
-        assert ("claim", 0) in calls
-        assert calls[0][0] == "find"
-        opened.close()
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            _usb_dump()
+        assert "cfg=1 iface=1 alt=1 ep=0x02 type=bulk maxpkt=1024" in buf.getvalue()
     finally:
-        g.update(orig_fns)
+        g["_find_ft601"] = orig_find
+
+    # open() walks descriptors, claims the chosen iface, sets altsetting.
+    if _HAVE_PYUSB:
+        sentinel = dump_dev
+        orig_find = g["_find_ft601"]
+        orig_claim_fn = usb.util.claim_interface
+
+        def fake_find(vid, pid, index=0):
+            assert vid == 0x0403 and pid == 0x601F
+            return sentinel
+
+        def fake_claim(dev, n):
+            dev.claimed.append(int(n))
+
+        try:
+            g["_find_ft601"] = fake_find
+            usb.util.claim_interface = fake_claim
+            opened = FT601Client().open()
+            assert opened._dev is sentinel
+            assert opened._ep_out == 0x02 and opened._ep_in == 0x82
+            assert opened._intf_num == 1
+            assert sentinel.claimed == [1]
+            assert (1, 1) in sentinel.alts
+            opened.close()
+            assert opened._dev is None
+        finally:
+            g["_find_ft601"] = orig_find
+            usb.util.claim_interface = orig_claim_fn
 
     orig_have = g["_HAVE_PYUSB"]
     g["_HAVE_PYUSB"] = False
@@ -871,6 +1151,17 @@ def _selftest() -> None:
         assert ident_sv["ssid"] == DONOR_SSID
         assert ident_sv["mac"] == DONOR_MAC
     print("ft601_client self-test: OK")
+
+
+def _usb_dump(vid: int = FT601Client.DEFAULT_VID,
+              pid: int = FT601Client.DEFAULT_PID,
+              index: int = 0) -> None:
+    """Print compact USB descriptors and return; exit 0 if the device exists."""
+    try:
+        dev = _find_ft601(vid, pid, index)
+    except Exception as exc:
+        raise SystemExit(f"FT601 {vid:04x}:{pid:04x} not found ({exc})") from exc
+    print(_format_descriptor_dump(dev))
 
 
 def _open_or_die() -> FT601Client:
@@ -900,10 +1191,15 @@ if __name__ == "__main__":
                     help="LeechCoreAdapter physical read (MAGIC path, up to 128 B/TLP)")
     ap.add_argument("--identify", action="store_true",
                     help="print LeechCore-shaped identify (offline if no FT601)")
+    ap.add_argument("--usb-dump", action="store_true",
+                    help="print 0403:601F descriptors (cfg/iface/alt/ep) and exit")
     args = ap.parse_args()
 
     if args.selftest:
         _selftest()
+    if args.usb_dump:
+        _usb_dump()
+        raise SystemExit(0)
     if args.identify:
         try:
             with FT601Client() as dev:

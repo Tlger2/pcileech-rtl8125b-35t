@@ -106,7 +106,7 @@ vivado -mode batch -source vivado_flash.tcl
 
 ### 2. Laptop USB-connected to the 35T (after the card is up)
 
-Windows: Zadig → WinUSB on `VID 0403 PID 601F` **MI_00**, plus `libusb-1.0.dll` on PATH. Linux: `libusb-1.0`, user in `plugdev` or a udev rule for `0403:601f`.
+Windows: Zadig → WinUSB on `VID 0403 PID 601F` (the interface with bulk pipes; often MI_00), plus `libusb-1.0.dll` on PATH. Linux: `libusb-1.0`, user in `plugdev` or a udev rule for `0403:601f`.
 
 ```bash
 cd /path/to/pcileech-rtl8125b-35t
@@ -115,6 +115,7 @@ python3 host/ft601_client.py --selftest
 lsusb | grep -i 0403
 # expect: 0403:601f  Future Technology Devices International, Ltd FT601
 
+python3 host/ft601_client.py --usb-dump
 python3 host/ft601_client.py --identify
 python3 host/ft601_client.py --ping
 python3 host/ft601_client.py --write 0x04 0x00001000
@@ -123,7 +124,7 @@ python3 host/ft601_client.py --read-burst 0x40 32
 python3 host/ft601_client.py --dma-read 0x1000 128
 ```
 
-`--selftest` is offline (no FT601). `--identify` prints donor 10EC:8125 rev 05 even if the USB device is missing (`usb` is true only if pyusb finds `0403:601F`, and `--identify` also tries to open it). `--ping` opens WinUSB bulk on MI_00 and bulk-writes MAGIC+KEEPALIVE (wire `0x87`), then waits for the FPGA ACK — it does not use `ftdi://`. `--read` / `--write` / `--dma-read` also require `0403:601f`.
+`--selftest` is offline (no FT601). `--usb-dump` prints cfg/iface/alt/ep descriptors and exits 0 if `0403:601F` is found. `--identify` prints donor 10EC:8125 rev 05 even if the USB device is missing (`usb` is true only if pyusb finds `0403:601F`, and `--identify` also tries to open it). `--ping` walks every interface/altsetting for a bulk IN+OUT pair (preferring 0x02/0x82) and bulk-writes MAGIC+KEEPALIVE (wire `0x87`), then waits for the FPGA ACK — it does not use `ftdi://`. If open fails, the client prints a compact descriptor dump. `--read` / `--write` / `--dma-read` also require `0403:601f`.
 
 ### 3. PCIe host that has the card in a slot
 
