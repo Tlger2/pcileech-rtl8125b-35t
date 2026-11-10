@@ -25,19 +25,24 @@ frame round-trip:
 python ft601_client.py --selftest
 ```
 
-On hardware:
+On the laptop USB-connected to the 35T (`lsusb` shows `0403:601f`):
 
 ```
-python ft601_client.py --ping
-python ft601_client.py --read  0x00001000
-python ft601_client.py --write 0x00001000 0xDEADBEEF
+python3 ft601_client.py --selftest
+python3 ft601_client.py --identify
+python3 ft601_client.py --ping
+python3 ft601_client.py --write 0x04 0x00001000
+python3 ft601_client.py --read  0x04
+python3 ft601_client.py --read-burst 0x40 32
+python3 ft601_client.py --dma-read 0x1000 128
 ```
 
-LeechCore-shaped identify/read/write on the same MAGIC path (does not
-speak native MemProcFS `fpga://`, which is the PCILeech 0x77 TLP stream):
+LeechCore-shaped identify/read/write on the same MAGIC path. Native
+MemProcFS `fpga://` is the PCILeech 0x77 TLP stream and will not identify
+this bitstream:
 
 ```
-python ft601_client.py --identify
+python3 ft601_client.py --identify
 ```
 
 ```python

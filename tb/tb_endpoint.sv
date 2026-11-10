@@ -72,7 +72,7 @@ module tb_endpoint;
         .last_base_addr(last_base_addr)
     );
 
-    logic [31:0] rf_mem [logic [31:0]];
+    logic [31:0] rf_mem [0:16383];
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -80,9 +80,9 @@ module tb_endpoint;
             rf_rvalid <= 1'b0;
         end else begin
             rf_rvalid <= 1'b0;
-            if (rf_we) rf_mem[rf_waddr] = rf_wdata;
+            if (rf_we) rf_mem[rf_waddr[15:2]] <= rf_wdata;
             if (rf_re) begin
-                rf_rdata  <= rf_mem.exists(rf_raddr) ? rf_mem[rf_raddr] : 32'hBAADF00D;
+                rf_rdata  <= rf_mem[rf_raddr[15:2]];
                 rf_rvalid <= 1'b1;
             end
         end
@@ -105,7 +105,7 @@ module tb_endpoint;
         input logic [31:0] payload[$]
     );
         logic [7:0] wire_opc;
-        wire_opc = opc_encode(canon_opc);
+        wire_opc = opcode_scramble_pkg::opc_encode(canon_opc);
         push_word(32'h5AA5_C33C);
         push_word({wire_opc, flags, length_dw});
         push_word(base_addr);
@@ -368,10 +368,10 @@ module tb_endpoint;
             wait (frame_done_sticky); frame_done_sticky = 1'b0;
             @(posedge clk);
         end
-        `CHECK(rf_mem.exists(32'h0000_1000) && rf_mem[32'h0000_1000] == 32'hDEAD_BEEF, "A.1 regfile[0x1000]")
-        `CHECK(rf_mem.exists(32'h0000_1004) && rf_mem[32'h0000_1004] == 32'hCAFE_F00D, "A.1 regfile[0x1004]")
-        `CHECK(rf_mem.exists(32'h0000_1008) && rf_mem[32'h0000_1008] == 32'h1234_5678, "A.1 regfile[0x1008]")
-        `CHECK(rf_mem.exists(32'h0000_100C) && rf_mem[32'h0000_100C] == 32'hA5A5_5A5A, "A.1 regfile[0x100C]")
+        `CHECK(rf_mem[32'h0000_1000 >> 2] == 32'hDEAD_BEEF, "A.1 regfile[0x1000]")
+        `CHECK(rf_mem[32'h0000_1004 >> 2] == 32'hCAFE_F00D, "A.1 regfile[0x1004]")
+        `CHECK(rf_mem[32'h0000_1008 >> 2] == 32'h1234_5678, "A.1 regfile[0x1008]")
+        `CHECK(rf_mem[32'h0000_100C >> 2] == 32'hA5A5_5A5A, "A.1 regfile[0x100C]")
         `CHECK(last_opcode == OPC_WRITE_BURST, "A.1 last_opcode descrambled")
         `CHECK(last_base_addr == 32'h0000_1000, "A.1 last_base_addr")
 

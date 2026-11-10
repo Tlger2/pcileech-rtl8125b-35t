@@ -14,7 +14,9 @@ Live in this tree (no card required to review or sim):
 - Identity is one package (`rtl/rtl8125b_identity_pkg.sv`): VID/DID 10EC:8125, Rev 05, Class 020000, SVID/SSID 10EC:0123, MAC `00:E0:4C:7A:3B:91`, DSN derived from that MAC. Wrapper `cfg_dsn` is that value, not 0.
 - Soft Type-0 header, BAR decoder, and `vivado_build.tcl` pcie_7x CONFIG agree on BAR0 I/O 256 B, BAR2 64-bit npref 64 KB (MAC), BAR4 64-bit npref 16 KB (MSI-X). Cap chain PM@0x40 → MSI@0x50 → PCIe@0x70 → MSI-X@0xB0 → VPD@0xD0. ECAP: AER@0x100 → VC@0x148 → DSN@0x168 → TPH@0x178 → LTR@0x204 → L1PM@0x20C → VSEC@0x21C.
 - MAC register file uses r8125/r8169 offsets (ChipCmd 0x37, TxPoll 0x38, IntrStatus 0x3e, PHYAR 0x60). TxConfig chip id is `0x64Axxxxx` (RTL8125B). PHYAR completes so a Windows PHY probe does not Code 10.
-- DMA engine issues burst MRd/MWr with a real Length field, up to 32 DW (128 B) / MPS. Host `--selftest` still passes. `LeechCoreAdapter` maps identify/read/write onto the existing MAGIC+opcode path.
+- DMA engine issues burst MRd/MWr with a real Length field, up to 32 DW (128 B) / MPS. CplD gather accepts continuation beats and split completions. Host `--selftest` covers READ_BURST length-in-HDR and KEEPALIVE. `LeechCoreAdapter` maps identify/read/write onto the existing MAGIC+opcode path. KEEPALIVE/STATUS/INFO/VERSION/RESET return a 0-DW USB ACK so `--ping` does not hang.
+
+Icarus: `bash scripts/sim_iverilog.sh` (dma 128 B, BAR0 map, BAR CplD, USB response). `tb_endpoint` is XSim-first; iverilog compiles it only.
 
 Still needs the card:
 
@@ -82,12 +84,53 @@ on the MAGIC path without changing the opcode LUT.
   - PCIe Gen2 x1, BAR0 I/O 256 B, BAR2 MEM64 64 KB npref, BAR4 MEM64 16 KB npref
   - MSI 1-vector maskable 64-bit; MSI-X 32 vectors in BAR4
 
-## Bring-up on the card
+## Tonight: laptop USB + Vivado machine
 
-1. Build in Vivado 2026.1 (`vivado -mode batch -source vivado_build.tcl`) and flash.
-2. `lspci -nnvvv` against a donor RTL8125B rev 05: IDs, rev, BAR types/sizes, cap next-ptrs, DSN at 0x168, MSI-X Table BIR=4 / PBA 0x800.
-3. Windows Device Manager: r8125 / rt640x64 bind, PHYAR probe, no Code 10.
-4. FT601: `python host/ft601_client.py --selftest` (offline) then `--identify` / adapter `read`/`write` with the card attached.
+The FT601 is the USB3 connector on the CaptainDMA 35T. Stock MemProcFS `fpga://` speaks PCILeech's 0x77 TLP stream; this bitstream speaks MAGIC `0x5AA5C33C` + scrambled opcodes. Use `host/ft601_client.py` (or `host/leechcore_adapter.py`). Do not point MemProcFS `fpga://` at this image.
+
+### 1. Bitstream (machine with Vivado 2026.1)
+
+```bash
+cd /path/to/pcileech-rtl8125b-35t
+git checkout cursor/rtl8125b-eac-hide-1fc4
+vivado -mode batch -source vivado_build.tcl
+# bitstream:
+#   vivado_project/rtl8125b_dma.runs/impl_1/pcie_top_wrapper.bit
+vivado -mode batch -source vivado_flash.tcl
+```
+
+`vivado_flash.tcl` JTAG-loads FPGA SRAM (gone on power cycle). For SPI that survives reboot: Hardware Manager → Add Configuration Memory Device → program the `.bit` / generated `.mcs`. There is no `.bit` in this repo; this environment has no Vivado.
+
+### 2. Laptop USB-connected to the 35T (after the card is up)
+
+Windows: Zadig → WinUSB on `VID 0403 PID 601F`. Linux: user in `plugdev` or a udev rule for `0403:601f`.
+
+```bash
+cd /path/to/pcileech-rtl8125b-35t
+python3 -m pip install pyftdi
+python3 host/ft601_client.py --selftest
+lsusb | grep -i 0403
+# expect: 0403:601f  Future Technology Devices International, Ltd FT601
+
+python3 host/ft601_client.py --identify
+python3 host/ft601_client.py --ping
+python3 host/ft601_client.py --write 0x04 0x00001000
+python3 host/ft601_client.py --read  0x04
+python3 host/ft601_client.py --read-burst 0x40 32
+python3 host/ft601_client.py --dma-read 0x1000 128
+```
+
+`--selftest` is offline (no FT601). `--identify` prints donor 10EC:8125 rev 05 even if the USB device is missing; `--ping` / `--read` / `--write` / `--dma-read` require `0403:601f`.
+
+### 3. PCIe host that has the card in a slot
+
+```bash
+lspci -nnvvv -d 10ec:8125
+# IDs 10ec:8125 rev 05, SVID/SSID 10ec:0123
+# BAR0 I/O 256, BAR2 MEM64 64K npref, BAR4 MEM64 16K npref
+# Capabilities: PM@40 → MSI@50 → PCIe@70 → MSI-X@b0 (32 vec, BIR=4, PBA 0x800)
+# ECAP DSN at 0x168 = 0000e04c7a3b9100
+```
 
 ## Build notes
 

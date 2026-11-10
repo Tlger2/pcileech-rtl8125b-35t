@@ -102,9 +102,15 @@ class Frame:
     flags: int
     address: int
     payload: list[int]   # 32-bit DWs
+    # Reads put the requested DW count in HDR length_dw with an empty
+    # payload. Writes use len(payload). Independent so READ_BURST of 32
+    # DWs (128 B) is not serialized as length 0.
+    req_length_dw: int | None = None
 
     @property
     def length_dw(self) -> int:
+        if self.req_length_dw is not None:
+            return self.req_length_dw
         return len(self.payload)
 
     def to_bytes(self) -> bytes:
@@ -191,7 +197,9 @@ class FT601Client:
             self._ftdi = None
 
     def __enter__(self) -> "FT601Client":
-        return self.open()
+        if self._ftdi is None:
+            return self.open()
+        return self
 
     def __exit__(self, *_exc_info) -> None:
         self.close()
@@ -283,16 +291,20 @@ class FT601Client:
             flags=flags,
             address=address,
             payload=[],
+            req_length_dw=1,
         ))
         rsp = self.recv_frame(expect_payload_dw=1)
         return rsp.payload[0]
 
     def read_burst(self, address: int, length_dw: int, flags: int = 0) -> list[int]:
+        if length_dw <= 0:
+            raise ValueError("length_dw must be >= 1")
         self.send_frame(Frame(
             opcode=Opcode.READ_BURST,
             flags=flags,
             address=address,
             payload=[],
+            req_length_dw=length_dw,
         ))
         rsp = self.recv_frame(expect_payload_dw=length_dw)
         return rsp.payload
@@ -300,7 +312,7 @@ class FT601Client:
     def ping(self) -> Frame:
         self.send_frame(Frame(
             opcode=Opcode.KEEPALIVE,
-            flags=0, address=0, payload=[]
+            flags=0, address=0, payload=[], req_length_dw=0
         ))
         return self.recv_frame()
 
@@ -419,6 +431,37 @@ def _dsn_from_mac(mac: bytes) -> str:
     return f"{dsn_hi:08x}{dsn_lo:08x}"
 
 
+def _identity_from_rtl() -> dict | None:
+    """Parse rtl8125b_identity_pkg.sv so host/RTL IDs cannot silently drift."""
+    from pathlib import Path
+    import re
+    pkg = Path(__file__).resolve().parents[1] / "rtl" / "rtl8125b_identity_pkg.sv"
+    if not pkg.is_file():
+        return None
+    text = pkg.read_text(encoding="utf-8")
+
+    def hex_field(name: str) -> int:
+        m = re.search(rf"{name}\s*=\s*16'h([0-9A-Fa-f]+)", text)
+        if not m:
+            raise AssertionError(f"missing {name} in {pkg}")
+        return int(m.group(1), 16)
+
+    rev = re.search(r"REVISION_ID\s*=\s*8'h([0-9A-Fa-f]+)", text)
+    mac = re.search(r"MAC_ADDR\s*=\s*48'h([0-9A-Fa-f_]+)", text)
+    if not rev or not mac:
+        raise AssertionError(f"missing REVISION_ID/MAC_ADDR in {pkg}")
+    mac_int = int(mac.group(1).replace("_", ""), 16)
+    mac_bytes = mac_int.to_bytes(6, "big")
+    return {
+        "vid": hex_field("VENDOR_ID"),
+        "did": hex_field("DEVICE_ID"),
+        "rev": int(rev.group(1), 16),
+        "svid": hex_field("SUBSYS_VENDOR_ID"),
+        "ssid": hex_field("SUBSYS_ID"),
+        "mac": mac_bytes,
+    }
+
+
 # ------------------------------------------------------------------
 # Self-test: offline bijection + round-trip framing (no hardware)
 # ------------------------------------------------------------------
@@ -455,6 +498,8 @@ def _selftest() -> None:
     assert ident["mac"] == "00:e0:4c:7a:3b:91"
     assert ident["dsn"] == _dsn_from_mac(DONOR_MAC)
     assert ident["max_read_bytes"] == 128
+    assert ident["dsn"] != "0000000000000000"
+    assert ident["mac"] != "12:34:56:00:00:00"
 
     # Adapter read/write require a client; packing of a 128 B burst is
     # still checked through Frame so the DMA LENGTH path stays aligned.
@@ -466,7 +511,44 @@ def _selftest() -> None:
     )
     assert burst.length_dw == DMA_MAX_DW
     assert (burst.to_bytes()[4] & 0xFF) == DMA_MAX_DW  # length_dw low byte
+
+    rd = Frame(
+        opcode=Opcode.READ_BURST,
+        flags=0,
+        address=DMA_BUF,
+        payload=[],
+        req_length_dw=DMA_MAX_DW,
+    )
+    rd_words = _words(rd.to_bytes())
+    assert rd.length_dw == DMA_MAX_DW
+    assert (rd_words[1] & 0xFFFF) == DMA_MAX_DW
+    assert len(rd_words) == 3  # MAGIC + HDR + ADDR, no payload
+
+    ping = Frame(opcode=Opcode.KEEPALIVE, flags=0, address=0, payload=[],
+                 req_length_dw=0)
+    ping_words = _words(ping.to_bytes())
+    assert ping_words[0] == FRAME_MAGIC
+    assert ((ping_words[1] >> 24) & 0xFF) == _FORWARD[Opcode.KEEPALIVE]
+    assert (ping_words[1] & 0xFFFF) == 0
+
+    ident_sv = _identity_from_rtl()
+    if ident_sv is not None:
+        assert ident_sv["vid"] == DONOR_VID
+        assert ident_sv["did"] == DONOR_DID
+        assert ident_sv["rev"] == DONOR_REV
+        assert ident_sv["ssid"] == DONOR_SSID
+        assert ident_sv["mac"] == DONOR_MAC
     print("ft601_client self-test: OK")
+
+
+def _open_or_die() -> FT601Client:
+    try:
+        return FT601Client().open()
+    except Exception as exc:
+        raise SystemExit(
+            f"FT601 0403:601f not found ({exc}). "
+            "Check lsusb, WinUSB/Zadig on Windows, udev on Linux."
+        ) from exc
 
 
 if __name__ == "__main__":
@@ -481,6 +563,12 @@ if __name__ == "__main__":
     ap.add_argument("--write", nargs=2, type=lambda x: int(x, 0),
                     metavar=("ADDR", "VALUE"),
                     help="write one DW to the given address")
+    ap.add_argument("--read-burst", nargs=2, type=lambda x: int(x, 0),
+                    metavar=("ADDR", "LEN_DW"),
+                    help="read LEN_DW words starting at ADDR")
+    ap.add_argument("--dma-read", nargs=2, type=lambda x: int(x, 0),
+                    metavar=("PA", "BYTES"),
+                    help="LeechCoreAdapter physical read (MAGIC path, up to 128 B/TLP)")
     ap.add_argument("--identify", action="store_true",
                     help="print LeechCore-shaped identify (offline if no FT601)")
     args = ap.parse_args()
@@ -490,16 +578,29 @@ if __name__ == "__main__":
     if args.identify:
         try:
             with FT601Client() as dev:
-                print(LeechCoreAdapter(dev).identify())
+                info = LeechCoreAdapter(dev).identify()
         except Exception:
-            print(LeechCoreAdapter().identify())
+            info = LeechCoreAdapter().identify()
+        shown = dict(info)
+        for key, width in (("vid", 4), ("did", 4), ("svid", 4), ("ssid", 4), ("rev", 2)):
+            if isinstance(shown.get(key), int):
+                shown[key] = f"0x{shown[key]:0{width}X}"
+        print(shown)
     if args.ping:
-        with FT601Client() as dev:
+        with _open_or_die() as dev:
             print(dev.ping())
     if args.read is not None:
-        with FT601Client() as dev:
+        with _open_or_die() as dev:
             print(f"0x{dev.read_dw(args.read):08X}")
     if args.write is not None:
-        with FT601Client() as dev:
+        with _open_or_die() as dev:
             dev.write_dw(args.write[0], args.write[1])
             print("OK")
+    if args.read_burst is not None:
+        with _open_or_die() as dev:
+            words = dev.read_burst(args.read_burst[0], args.read_burst[1])
+            print(" ".join(f"0x{w:08X}" for w in words))
+    if args.dma_read is not None:
+        with _open_or_die() as dev:
+            data = LeechCoreAdapter(dev).read(args.dma_read[0], args.dma_read[1])
+            print(data.hex())
