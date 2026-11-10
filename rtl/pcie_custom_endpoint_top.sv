@@ -324,13 +324,13 @@ assign rx_length = rx_dw0_q[9:0];
 
 // Decoded TLP class flags
 logic rx_is_memrd, rx_is_memwr, rx_is_cpld;
-assign rx_is_memrd = (rx_fmt == 2'b01) && (rx_type == 5'b00000);
+assign rx_is_memrd = (rx_fmt[1] == 1'b0) && (rx_type == 5'b00000);
 assign rx_is_memwr = (rx_fmt == 2'b11) && (rx_type == 5'b00000);
 assign rx_is_cpld  = (rx_fmt == 2'b10) && (rx_type == 5'b01010);
 
-// BAR0 hit: requester is EAC/host probing our BAR0 (addr[27:16] == 0 for 64K)
+// The low address word is DW2 for 3DW requests and DW3 for 4DW requests.
 logic [31:0] rx_bar0_addr;
-assign rx_bar0_addr = rx_dw3_q;   // lower 32 bits of 4DW address
+assign rx_bar0_addr = rx_fmt[0] ? rx_dw3_q : rx_dw2_q;
 
 // requester ID and tag for BAR0 CplD
 logic [15:0] rx_req_id;
@@ -390,7 +390,7 @@ assign rx_cpl_last_w  = m_axis_rx_tlast;
 // =============================================================================
 // SECTION 8 — BAR0 shadow RAM read + CplD builder  (#4 fix, #5 fix)
 // =============================================================================
-// When a 4DW MemRd targeting BAR0 is detected, we build a CplD using data
+// When a MemRd targeting BAR0 is detected, we build a CplD using data
 // from rtl8125b_bar0_regs (shadow RAM). Priority over DMA TLPs.
 
 logic [31:0] bar0_rdata;
@@ -401,7 +401,7 @@ logic [31:0] bar0_wdata;
 logic  [3:0] bar0_be;
 logic        irq_pulse;
 
-// BAR0 access is from host MemRd/MemWr — decode address from rx_dw3
+// BAR0 byte address within the 64 KiB aperture.
 assign bar0_byte_addr = rx_bar0_addr[15:0];
 assign bar0_wdata     = 32'h0;    // Memory Write payload is not wired to the register bank
 assign bar0_be        = 4'hF;
