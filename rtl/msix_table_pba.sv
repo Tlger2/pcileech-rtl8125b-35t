@@ -1,4 +1,4 @@
-// MSI-X Table + PBA storage, memory-mapped inside BAR0.
+// MSI-X Table + PBA storage, memory-mapped inside BAR4.
 // Table: NUM_VECTORS * 16 bytes starting at TABLE_BAR_BYTE_BASE
 // PBA  : NUM_VECTORS bits packed into DWs at PBA_BAR_BYTE_BASE
 // At reset all vectors are masked per PCIe spec (Vector Control bit 0 = 1).

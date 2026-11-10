@@ -81,9 +81,9 @@ logic [31:0] buf_q [0:MAX_BURST_DW-1];
 logic [31:0] dw0_q, dw1_q, dw2_q, dw3_q;
 
 logic        cpl_hdr0_q;
+logic        cpl_need_dw2_q;    // next beat is {data0, DW2} of this CplD
 logic  [9:0] cpl_got_q;
 logic  [9:0] cpl_need_q;
-logic        cpl_odd_q;         // next payload DW lands in tdata[31:0]
 
 logic [31:0] rf_rdata_q;
 logic        rf_rvalid_q;
@@ -104,6 +104,9 @@ assign dma_cpl_seen = (state_q == ST_DONE) && is_read_q;
 logic [9:0] pld_idx_q;          // DWs already emitted on TX_PLD
 logic [9:0] pld_remain;
 assign pld_remain = (xfer_len_q > pld_idx_q) ? (xfer_len_q - pld_idx_q) : 10'd0;
+wire [9:0] cpl_cont_add =
+    ((cpl_got_q + 10'd1) < MAX_BURST_DW[9:0] && rx_cpl_keep[7:4] == 4'hF)
+        ? 10'd2 : 10'd1;
 
 // MPS in DWs: encoding 000=32 (128B), 001=64 (256B), ...
 function automatic logic [9:0] mps_limit_dw(input logic [2:0] mps);
@@ -125,6 +128,7 @@ endfunction
 
 logic [9:0] mps_dw;
 assign mps_dw = mps_limit_dw(cfg_max_payload_size);
+wire [9:0] go_len = (length_q == 10'd0) ? 10'd1 : length_q;
 
 logic in_buf_w, in_buf_r;
 logic [$clog2(MAX_BURST_DW)-1:0] buf_idx_w, buf_idx_r;
@@ -156,9 +160,9 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         tx_keep_q      <= 8'h0;
         tx_last_q      <= 1'b0;
         cpl_hdr0_q     <= 1'b0;
+        cpl_need_dw2_q <= 1'b0;
         cpl_got_q      <= '0;
         cpl_need_q     <= '0;
-        cpl_odd_q      <= 1'b0;
         pld_idx_q      <= '0;
         rf_rdata_q     <= 32'h0;
         rf_rvalid_q    <= 1'b0;
@@ -183,15 +187,15 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 end
                 CTRL_ADDR: begin
                     if (state_q == ST_IDLE && !dma_hold_req) begin
-                        xfer_len_q <= (length_q == 0) ? 10'd1 : length_q;
+                        xfer_len_q <= go_len;
                         if (rf_wdata[0]) begin
                             is_read_q  <= 1'b1;
                             status_q   <= 32'h1;
                             pend_tag_q <= tag_q;
                             tag_q      <= tag_q + 8'd1;
-                            dw0_q <= 32'h2000_0000 | {22'h0, length_q};
+                            dw0_q <= 32'h2000_0000 | {22'h0, go_len};
                             dw1_q <= {cfg_completer_id, tag_q,
-                                      (length_q == 10'd1) ? 4'h0 : 4'hF, 4'hF};
+                                      (go_len == 10'd1) ? 4'h0 : 4'hF, 4'hF};
                             dw2_q <= addr_hi_q;
                             dw3_q <= {addr_lo_q[31:2], 2'b00};
                             state_q <= ST_TX_H0;
@@ -199,9 +203,9 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                             is_read_q  <= 1'b0;
                             status_q   <= 32'h1;
                             tag_q      <= tag_q + 8'd1;
-                            dw0_q <= 32'h6000_0000 | {22'h0, length_q};
+                            dw0_q <= 32'h6000_0000 | {22'h0, go_len};
                             dw1_q <= {cfg_completer_id, tag_q,
-                                      (length_q == 10'd1) ? 4'h0 : 4'hF, 4'hF};
+                                      (go_len == 10'd1) ? 4'h0 : 4'hF, 4'hF};
                             dw2_q <= addr_hi_q;
                             dw3_q <= {addr_lo_q[31:2], 2'b00};
                             state_q <= ST_TX_H0;
@@ -230,60 +234,64 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
             ST_IDLE: tx_valid_q <= 1'b0;
 
             ST_TX_H0: begin
-                tx_valid_q <= 1'b1;
-                tx_data_q  <= {dw1_q, dw0_q};
-                tx_keep_q  <= 8'hFF;
-                tx_last_q  <= 1'b0;
-                pld_idx_q  <= 10'd0;
-                if (tx_req_ready)
-                    state_q <= ST_TX_H1;
+                if (!tx_valid_q) begin
+                    tx_valid_q <= 1'b1;
+                    tx_data_q  <= {dw1_q, dw0_q};
+                    tx_keep_q  <= 8'hFF;
+                    tx_last_q  <= 1'b0;
+                    pld_idx_q  <= 10'd0;
+                end else if (tx_req_ready) begin
+                    tx_data_q <= {dw3_q, dw2_q};
+                    tx_last_q <= is_read_q;
+                    state_q   <= ST_TX_H1;
+                end
             end
 
             ST_TX_H1: begin
-                tx_valid_q <= 1'b1;
-                tx_data_q  <= {dw3_q, dw2_q};
-                tx_keep_q  <= 8'hFF;
-                tx_last_q  <= is_read_q;
                 if (tx_req_ready) begin
                     if (is_read_q) begin
-                        tx_valid_q <= 1'b0;
-                        cpl_hdr0_q <= 1'b0;
-                        cpl_got_q  <= 10'd0;
-                        cpl_need_q <= xfer_len_q;
-                        cpl_odd_q  <= 1'b0;
-                        state_q    <= ST_WAIT_CPL;
+                        tx_valid_q     <= 1'b0;
+                        cpl_hdr0_q     <= 1'b0;
+                        cpl_need_dw2_q <= 1'b0;
+                        cpl_got_q      <= 10'd0;
+                        cpl_need_q     <= xfer_len_q;
+                        state_q        <= ST_WAIT_CPL;
                     end else begin
+                        if (xfer_len_q <= 10'd1) begin
+                            tx_data_q <= {32'h0, buf_q[0]};
+                            tx_keep_q <= 8'h0F;
+                            tx_last_q <= 1'b1;
+                            pld_idx_q <= 10'd1;
+                        end else begin
+                            tx_data_q <= {buf_q[1], buf_q[0]};
+                            tx_keep_q <= 8'hFF;
+                            tx_last_q <= (xfer_len_q <= 10'd2);
+                            pld_idx_q <= 10'd2;
+                        end
                         state_q <= ST_TX_PLD;
                     end
                 end
             end
 
             ST_TX_PLD: begin
-                tx_valid_q <= 1'b1;
-                if (pld_remain <= 10'd1) begin
-                    tx_data_q <= {32'h0, buf_q[pld_idx_q[$clog2(MAX_BURST_DW)-1:0]]};
-                    tx_keep_q <= 8'h0F;
-                    tx_last_q <= 1'b1;
-                    if (tx_req_ready) begin
+                if (tx_req_ready) begin
+                    if (tx_last_q) begin
                         tx_valid_q <= 1'b0;
                         status_q   <= 32'h2;
                         state_q    <= ST_DONE;
-                    end
-                end else begin
-                    tx_data_q <= {
-                        buf_q[pld_idx_q[$clog2(MAX_BURST_DW)-1:0] + 1],
-                        buf_q[pld_idx_q[$clog2(MAX_BURST_DW)-1:0]]
-                    };
-                    tx_keep_q <= 8'hFF;
-                    tx_last_q <= (pld_remain <= 10'd2);
-                    if (tx_req_ready) begin
-                        if (pld_remain <= 10'd2) begin
-                            tx_valid_q <= 1'b0;
-                            status_q   <= 32'h2;
-                            state_q    <= ST_DONE;
-                        end else begin
-                            pld_idx_q <= pld_idx_q + 10'd2;
-                        end
+                    end else if (pld_remain <= 10'd1) begin
+                        tx_data_q <= {32'h0, buf_q[pld_idx_q[$clog2(MAX_BURST_DW)-1:0]]};
+                        tx_keep_q <= 8'h0F;
+                        tx_last_q <= 1'b1;
+                        pld_idx_q <= pld_idx_q + 10'd1;
+                    end else begin
+                        tx_data_q <= {
+                            buf_q[pld_idx_q[$clog2(MAX_BURST_DW)-1:0] + 1],
+                            buf_q[pld_idx_q[$clog2(MAX_BURST_DW)-1:0]]
+                        };
+                        tx_keep_q <= 8'hFF;
+                        tx_last_q <= (pld_remain <= 10'd2);
+                        pld_idx_q <= pld_idx_q + 10'd2;
                     end
                 end
             end
@@ -292,69 +300,45 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 tx_valid_q <= 1'b0;
                 if (rx_cpl_valid) begin
                     if (!cpl_hdr0_q) begin
-                        cpl_hdr0_q <= 1'b1;
-                        cpl_odd_q  <= 1'b0;
-                    end else begin
-                        // Beat 1+: first of a CplD is {data0, DW2}, later {data_odd, data_even}
-                        if (!cpl_odd_q) begin
-                            // Could be header beat1 {data0, DW2} or a later even/odd pair.
-                            // Distinguishing: the first payload-bearing beat of each CplD
-                            // has DW2 in the low half (tag in [15:8]).
-                            if (cpl_got_q == 10'd0) begin
-                                if (rx_cpl_data[15:8] != pend_tag_q) begin
-                                    status_q   <= 32'h4;
-                                    state_q    <= ST_DONE;
-                                end else begin
-                                    buf_q[0]   <= rx_cpl_data[63:32];
-                                    rdata_q    <= rx_cpl_data[63:32];
-                                    cpl_got_q  <= 10'd1;
-                                    cpl_odd_q  <= 1'b1; // next beat is {d2,d1} or last
-                                    if (rx_cpl_last) begin
-                                        cpl_hdr0_q <= 1'b0;
-                                        if (10'd1 >= cpl_need_q) begin
-                                            status_q <= 32'h2;
-                                            state_q  <= ST_DONE;
-                                        end
-                                    end
-                                end
-                            end else begin
-                                // Subsequent CplD beat1 or a data beat starting a new pair
-                                if (cpl_got_q < MAX_BURST_DW[9:0])
-                                    buf_q[cpl_got_q[$clog2(MAX_BURST_DW)-1:0]] <=
-                                        rx_cpl_data[63:32];
-                                if (cpl_got_q == 10'd0)
-                                    rdata_q <= rx_cpl_data[63:32];
-                                cpl_got_q <= cpl_got_q + 10'd1;
-                                cpl_odd_q <= 1'b1;
-                                if (rx_cpl_last) begin
-                                    cpl_hdr0_q <= 1'b0;
-                                    if ((cpl_got_q + 10'd1) >= cpl_need_q) begin
-                                        status_q <= 32'h2;
-                                        state_q  <= ST_DONE;
-                                    end
-                                end
-                            end
+                        // Beat 0 of each CplD: {DW1, DW0}. Completions may split.
+                        cpl_hdr0_q     <= 1'b1;
+                        cpl_need_dw2_q <= 1'b1;
+                    end else if (cpl_need_dw2_q) begin
+                        // Beat 1: {data0, DW2}. Tag lives in DW2[15:8].
+                        cpl_need_dw2_q <= 1'b0;
+                        if (rx_cpl_data[15:8] != pend_tag_q) begin
+                            status_q <= 32'h4;
+                            state_q  <= ST_DONE;
                         end else begin
-                            // Odd phase: low half is next DW, high half maybe another
                             if (cpl_got_q < MAX_BURST_DW[9:0])
                                 buf_q[cpl_got_q[$clog2(MAX_BURST_DW)-1:0]] <=
-                                    rx_cpl_data[31:0];
-                            if ((cpl_got_q + 10'd1) < MAX_BURST_DW[9:0] &&
-                                rx_cpl_keep[7:4] == 4'hF)
-                                buf_q[cpl_got_q[$clog2(MAX_BURST_DW)-1:0] + 1] <=
                                     rx_cpl_data[63:32];
-                            begin
-                                logic [9:0] add;
-                                add = (rx_cpl_keep[7:4] == 4'hF) ? 10'd2 : 10'd1;
-                                cpl_got_q <= cpl_got_q + add;
-                                cpl_odd_q <= 1'b0;
-                                if (rx_cpl_last) begin
-                                    cpl_hdr0_q <= 1'b0;
-                                    if ((cpl_got_q + add) >= cpl_need_q) begin
-                                        status_q <= 32'h2;
-                                        state_q  <= ST_DONE;
-                                    end
+                            if (cpl_got_q == 10'd0)
+                                rdata_q <= rx_cpl_data[63:32];
+                            cpl_got_q <= cpl_got_q + 10'd1;
+                            if (rx_cpl_last) begin
+                                cpl_hdr0_q <= 1'b0;
+                                if ((cpl_got_q + 10'd1) >= cpl_need_q) begin
+                                    status_q <= 32'h2;
+                                    state_q  <= ST_DONE;
                                 end
+                            end
+                        end
+                    end else begin
+                        // Continuation beats: {data_{n+1}, data_n} (7-series 64-bit).
+                        if (cpl_got_q < MAX_BURST_DW[9:0])
+                            buf_q[cpl_got_q[$clog2(MAX_BURST_DW)-1:0]] <=
+                                rx_cpl_data[31:0];
+                        if (cpl_cont_add == 10'd2)
+                            buf_q[cpl_got_q[$clog2(MAX_BURST_DW)-1:0] + 1] <=
+                                rx_cpl_data[63:32];
+                        cpl_got_q <= cpl_got_q + cpl_cont_add;
+                        if (rx_cpl_last) begin
+                            cpl_hdr0_q     <= 1'b0;
+                            cpl_need_dw2_q <= 1'b0;
+                            if ((cpl_got_q + cpl_cont_add) >= cpl_need_q) begin
+                                status_q <= 32'h2;
+                                state_q  <= ST_DONE;
                             end
                         end
                     end

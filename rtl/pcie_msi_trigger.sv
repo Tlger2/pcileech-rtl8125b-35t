@@ -128,8 +128,8 @@ module pcie_msi_trigger #(
 
     always_comb begin
         clr_pending = '0;
-        if (ms == S_REQ && cfg_interrupt_rdy && (vec_q < NUM_VECTORS))
-            clr_pending[vec_q[$clog2(NUM_VECTORS)-1:0]] = 1'b1;
+        if (ms == S_REQ && cfg_interrupt_rdy && (vec_q < NUM_VECTORS[7:0]))
+            clr_pending[vec_q] = 1'b1;
     end
 
     assign cfg_interrupt        = (ms == S_REQ);

@@ -63,6 +63,7 @@ module ft601_cmd_parser
     logic        is_burst;
     logic        is_write_cmd;
     logic        is_read_cmd;
+    logic        is_ack_cmd;
     logic        opc_known;
 
     always_comb begin
@@ -72,11 +73,16 @@ module ft601_cmd_parser
                        (opc_canon_q == OPC_WRITE_BURST);
         is_read_cmd  = (opc_canon_q == OPC_READ) ||
                        (opc_canon_q == OPC_READ_BURST);
-        opc_known    = is_write_cmd || is_read_cmd ||
-                       (opc_canon_q == OPC_NOP)     ||
-                       (opc_canon_q == OPC_STATUS)  ||
-                       (opc_canon_q == OPC_INFO)    ||
-                       (opc_canon_q == OPC_KEEPALIVE);
+        // Header-only USB reply so ping/identify/reset do not hang the host.
+        is_ack_cmd   = (opc_canon_q == OPC_NOP)       ||
+                       (opc_canon_q == OPC_STATUS)    ||
+                       (opc_canon_q == OPC_INFO)      ||
+                       (opc_canon_q == OPC_KEEPALIVE) ||
+                       (opc_canon_q == OPC_VERSION)   ||
+                       (opc_canon_q == OPC_RESET)     ||
+                       (opc_canon_q == OPC_FLUSH)     ||
+                       (opc_canon_q == OPC_HANDSHAKE);
+        opc_known    = is_write_cmd || is_read_cmd || is_ack_cmd;
     end
 
     always_comb begin
@@ -88,7 +94,7 @@ module ft601_cmd_parser
         rf_raddr        = cur_addr_q;
         frame_start     = 1'b0;
         read_start      = 1'b0;
-        read_length     = is_burst ? length_q : 16'd1;
+        read_length     = is_read_cmd ? (is_burst ? length_q : 16'd1) : 16'd0;
         frame_done      = 1'b0;
         state_n         = state;
 
@@ -121,6 +127,9 @@ module ft601_cmd_parser
                             read_start = fifo_rd_data != FRAME_MAGIC;
                             state_n = S_RISSUE;
                         end
+                    end else if (is_ack_cmd) begin
+                        read_start = fifo_rd_data != FRAME_MAGIC;
+                        state_n    = S_SYNC;
                     end else begin
                         state_n = S_SYNC;
                     end

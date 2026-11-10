@@ -45,6 +45,12 @@ foreach path $rtl_files {
     set_property file_type SystemVerilog $src
 }
 set_property top pcie_top_wrapper $srcset
+foreach pkg_name {rtl8125b_identity_pkg.sv opcode_scramble_pkg.sv} {
+    set pkg [get_files -quiet -of_objects $srcset *$pkg_name]
+    if {[llength $pkg]} {
+        reorder_files -fileset $srcset -front $pkg
+    }
+}
 update_compile_order -fileset sources_1
 set_property top pcie_top_wrapper $srcset
 
