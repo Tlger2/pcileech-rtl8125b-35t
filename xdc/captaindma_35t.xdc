@@ -105,15 +105,12 @@ set_property CONFIG_VOLTAGE  3.3  [current_design]
 #------------------------------------------------------------------------------
 create_clock -name board_clk   -period 10.000 [get_ports board_clk]
 create_clock -name ft601_clk   -period 10.000 [get_ports ft601_clk]
-# Create pcie_refclk on the IBUFDS_GTE2 O pin, NOT on the top-level port.
-# Vivado cannot propagate a port-level create_clock through IBUFDS_GTE2 into
-# the GT transceiver and downstream MMCM.  Anchoring on the O pin lets
-# -include_generated_clocks traverse the full GT→MMCM→user_clk_out chain.
-create_clock -name pcie_refclk -period 10.000 [get_pins u_refclk_ibuf/O]
+create_generated_clock -name ft601_io_clk [get_pins u_ft601_mmcm/CLKOUT0]
+create_generated_clock -name ft601_core_clk [get_pins u_ft601_mmcm/CLKOUT1]
+# Define the board reference clock at its physical entry point.
+create_clock -name pcie_refclk -period 10.000 [get_ports sys_clk_p]
 
 # All three oscillator domains are independent — declare async across the board.
-# -include_generated_clocks on pcie_refclk now captures pcie_user_clk and pipe_clk
-# because create_clock is on the IBUFDS_GTE2 O pin.
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks board_clk] \
     -group [get_clocks -include_generated_clocks ft601_clk] \
@@ -126,9 +123,9 @@ set_clock_groups -asynchronous \
 # are not physically meaningful.
 set_false_path -hold \
     -from [get_clocks ft601_clk] \
-    -to   [get_clocks -filter {NAME !~ ft601_clk && NAME !~ board_clk}]
+    -to   [get_clocks -filter {NAME !~ ft601* && NAME !~ board_clk}]
 set_false_path -hold \
-    -from [get_clocks -filter {NAME !~ ft601_clk && NAME !~ board_clk}] \
+    -from [get_clocks -filter {NAME !~ ft601* && NAME !~ board_clk}] \
     -to   [get_clocks ft601_clk]
 
 # Cell-based hold false-paths for xpm_fifo_async CDC gray-counter chains.
@@ -145,16 +142,19 @@ set_false_path -hold \
 set_false_path -hold \
     -to [get_cells -hierarchical -filter {NAME =~ *dest_graysync_ff_reg* && IS_SEQUENTIAL == 1}]
 
-# Reset synchronizer within xpm_fifo_rst (xpm_cdc_sync_rst) — same rationale.
-set_false_path -hold \
-    -to [get_cells -hierarchical -filter {NAME =~ *arststages_ff_reg*     && IS_SEQUENTIAL == 1}]
-
 #------------------------------------------------------------------------------
 # FT601 input/output delays — FTDI DS_FT600Q-FT601Q v1.06 table 4.2
 # 100 MHz, zero PCB skew assumed.
 #------------------------------------------------------------------------------
+# Match the upstream CaptainDMA 35T profile for the FIFO bus outputs.
+set_property SLEW FAST [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
 set_input_delay  -clock ft601_clk -min  3.5 [get_ports {ft601_rxf_n ft601_txe_n ft601_data[*]}]
 set_input_delay  -clock ft601_clk -max  7.0 [get_ports {ft601_rxf_n ft601_txe_n ft601_data[*]}]
+# Table 4.2 guarantees data from the previous rise is settled by 7 ns
+# and stays valid until 3.5 ns after the next rise. Sample at 10.5 ns
+# from launch. Keep the derived hold check at 0.5 ns after the next
+# launch. Only the board input pins use this setup/hold edge pairing.
+set_multicycle_path 2 -setup -end -from [get_ports {ft601_rxf_n ft601_txe_n ft601_data[*]}] -to [get_clocks ft601_core_clk]
 set_output_delay -clock ft601_clk -min -4.8 [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
 set_output_delay -clock ft601_clk -max  1.0 [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
 

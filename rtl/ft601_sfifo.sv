@@ -3,6 +3,7 @@
 
 module ft601_sfifo (
     input  logic        clk,     // ft601_clk, 100 MHz
+    input  logic        sample_clk,
     input  logic        rst_n,
 
     // ---- FT601 physical pins ----
@@ -26,15 +27,25 @@ module ft601_sfifo (
     input  logic  [3:0] fifo_wr_be      // byte enables for TX
 );
 
-    typedef enum logic [2:0] {IDLE, RX_OE, RX_READ, TX_SETUP, TX_WRITE, TURN} state_t;
+    typedef enum logic [2:0] {IDLE, RX_OE, RX_READ, TX_CLAIM, TX_SETUP, TX_WRITE, TURN} state_t;
     state_t state, next_state;
     logic tx_pending, prefer_tx;
     (* IOB = "TRUE" *) logic [31:0] tx_data;
     (* IOB = "TRUE" *) logic [3:0] tx_be;
-    wire rx_request = !ft601_rxf_n && (!fifo_rd_valid || fifo_rd_ready);
-    wire tx_request = tx_pending && !ft601_txe_n;
+    // Capture the FT601 pins before its guaranteed hold window ends.
+    // The FIFO state machine and output registers run on the later phase.
+    (* IOB = "TRUE" *) logic sampled_rxf_n, sampled_txe_n;
+    (* IOB = "TRUE" *) logic [31:0] sampled_data;
+    always_ff @(posedge sample_clk) begin
+        sampled_rxf_n <= ft601_rxf_n;
+        sampled_txe_n <= ft601_txe_n;
+        sampled_data <= ft601_data;
+    end
+    wire rx_request = !sampled_rxf_n && (!fifo_rd_valid || fifo_rd_ready);
+    wire tx_request = tx_pending && !sampled_txe_n;
 
-    wire tristate_next = !(next_state == TX_SETUP || next_state == TX_WRITE);
+    wire start_tx = tx_request && (prefer_tx || !rx_request);
+    wire tristate_next = !(state == TX_CLAIM || state == TX_SETUP);
     wire [35:0] tx_bus = {tx_be, tx_data};
     wire [35:0] pin_bus;
     assign {ft601_be, ft601_data} = pin_bus;
@@ -56,13 +67,14 @@ module ft601_sfifo (
         next_state = state;
         case (state)
             IDLE: begin
-                if (tx_request && (prefer_tx || !rx_request))
-                    next_state = TX_SETUP;
+                if (start_tx)
+                    next_state = TX_CLAIM;
                 else if (rx_request)
                     next_state = RX_OE;
             end
-            RX_OE: next_state = ft601_rxf_n ? TURN : RX_READ;
-            TX_SETUP: next_state = ft601_txe_n ? TURN : TX_WRITE;
+            RX_OE: next_state = sampled_rxf_n ? TURN : RX_READ;
+            TX_CLAIM: next_state = TX_SETUP;
+            TX_SETUP: next_state = sampled_txe_n ? TURN : TX_WRITE;
             RX_READ, TX_WRITE: next_state = TURN;
             default: next_state = IDLE;
         endcase
@@ -95,14 +107,14 @@ module ft601_sfifo (
 
             case (state)
                 RX_READ: begin
-                    if (!ft601_rxf_n) begin
-                        fifo_rd_data <= ft601_data;
+                    if (!sampled_rxf_n) begin
+                        fifo_rd_data <= sampled_data;
                         fifo_rd_valid <= 1'b1;
                         prefer_tx <= 1'b1;
                     end
                 end
                 TX_WRITE: begin
-                    if (!ft601_txe_n) begin
+                    if (!sampled_txe_n) begin
                         tx_pending <= 1'b0;
                         prefer_tx <= 1'b0;
                     end

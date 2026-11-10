@@ -23,6 +23,8 @@ module tb_usb_response;
     assign bus_data = !oe_n && !rxf_n ? request_words[rx_index] : 32'bz;
     assign bus_be = !oe_n && !rxf_n ? 4'hf : 4'bz;
 
+    logic ft601_sample_clk = 0;
+    always @(ft601_clk) ft601_sample_clk <= #5 ft601_clk;
     pcie_custom_endpoint_top dut (
         .user_clk(user_clk), .user_reset(user_reset), .user_lnk_up(1'b1),
         .s_axis_tx_tdata(tx_data), .s_axis_tx_tkeep(tx_keep),
@@ -37,6 +39,7 @@ module tb_usb_response;
         .cfg_interrupt_assert(), .cfg_interrupt_di(),
         .cfg_interrupt_msienable(1'b0), .cfg_interrupt_mmenable(3'b0),
         .ft601_clk(ft601_clk), .ft601_rst_n(!user_reset), .ft601_rxf_n(rxf_n),
+        .ft601_sample_clk(ft601_sample_clk),
         .ft601_oe_n(oe_n), .ft601_rd_n(rd_n), .ft601_wr_n(wr_n), .ft601_txe_n(txe_n),
         .ft601_data(bus_data), .ft601_be(bus_be)
     );

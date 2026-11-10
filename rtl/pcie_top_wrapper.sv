@@ -54,8 +54,27 @@ module pcie_top_wrapper (
     assign ft601_siwu_n = 1'b1;
 
     (* ASYNC_REG = "TRUE" *) logic [1:0] ft601_reset_release = '0;
-    always_ff @(posedge ft601_clk or negedge ft601_rst_n) begin
-        if (!ft601_rst_n)
+    // Derive separate FT601 input-sampling and FIFO/output phases from CLKOUT.
+    wire ft601_io_clk_raw, ft601_io_clk, ft601_clk_fb_raw, ft601_clk_fb;
+    wire ft601_io_locked, ft601_clk_in, ft601_core_clk_raw, ft601_core_clk;
+    IBUF u_ft601_clk_in (.I(ft601_clk), .O(ft601_clk_in));
+    BUFG u_ft601_core_buf (.I(ft601_core_clk_raw), .O(ft601_core_clk));
+    MMCME2_BASE #(
+        .CLKIN1_PERIOD(10.0), .CLKFBOUT_MULT_F(10.0), .DIVCLK_DIVIDE(1),
+        .CLKOUT0_DIVIDE_F(10.0), .CLKOUT0_PHASE(198.0),
+        .CLKOUT1_DIVIDE(10), .CLKOUT1_PHASE(18.0)
+    ) u_ft601_mmcm (
+        .CLKIN1(ft601_clk_in), .CLKFBIN(ft601_clk_fb), .CLKFBOUT(ft601_clk_fb_raw),
+        .CLKOUT0(ft601_io_clk_raw), .CLKOUT1(ft601_core_clk_raw), .LOCKED(ft601_io_locked),
+        .PWRDWN(1'b0), .RST(~ft601_rst_n)
+    );
+    BUFG u_ft601_fb_buf (.I(ft601_clk_fb_raw), .O(ft601_clk_fb));
+    BUFG u_ft601_io_buf (.I(ft601_io_clk_raw), .O(ft601_io_clk));
+
+    // The MMCM is held in reset until the bridge is released. LOCKED
+    // directly asserts reset on lock loss, with release synchronized below.
+    always_ff @(posedge ft601_io_clk or negedge ft601_io_locked) begin
+        if (!ft601_io_locked)
             ft601_reset_release <= '0;
         else
             ft601_reset_release <= {ft601_reset_release[0], 1'b1};
@@ -259,7 +278,8 @@ module pcie_top_wrapper (
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
 
-        .ft601_clk                (ft601_clk),
+        .ft601_clk                (ft601_io_clk),
+        .ft601_sample_clk         (ft601_core_clk),
         .ft601_rst_n              (ft601_reset_release[1]),
         .ft601_rxf_n              (ft601_rxf_n),
         .ft601_oe_n               (ft601_oe_n),
