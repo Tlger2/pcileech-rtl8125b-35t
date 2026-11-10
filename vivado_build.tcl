@@ -104,7 +104,7 @@ if {[llength $ip_exists] == 0} {
         CONFIG.Device_ID                {8125} \
         CONFIG.Revision_ID              {36} \
         CONFIG.Subsystem_Vendor_ID      {10EC} \
-        CONFIG.Subsystem_ID             {8125} \
+        CONFIG.Subsystem_ID             {0123} \
         CONFIG.Base_Class_Menu          {Network_controller} \
         CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
         CONFIG.Link_Speed               {5.0_GT/s} \
