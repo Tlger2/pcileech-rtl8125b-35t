@@ -143,6 +143,10 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const publishWorld = (world: WorldSnapshot) => {
+    setSnap({ ...world, fps });
+  };
+
   const connectDma = async (on: boolean) => {
     if (!on) {
       simRef.current.dmaConnected = false;
@@ -150,23 +154,35 @@ export function App() {
       simRef.current.liveLocal = true;
       joinRef.current.hadLiveLocal = false;
       setDmaMsg("SIM world");
+      publishWorld(simRef.current.tick(0, settingsRef.current));
       return;
     }
     const st = await probeDma(dmaUrlRef.current);
-    simRef.current.dmaConnected = st.connected;
-    simRef.current.provider = st.provider;
-    setDmaMsg(st.connected ? `LIVE ${st.provider}` : st.detail);
-    if (st.connected) {
-      const raw = await pullSnapshot(dmaUrlRef.current);
-      if (raw) {
-        const result = simRef.current.ingestSnapshot(raw);
-        const world = simRef.current.tick(0, settingsRef.current);
-        if (result.sizeChanged) setMapRev((n) => n + 1);
-        if (world.liveLocal || result.sizeChanged) applyJoinFormat(world);
-        joinRef.current.hadLiveLocal = world.liveLocal;
-        joinRef.current.worldSize = world.worldSize;
-      }
+    if (!st.connected) {
+      simRef.current.dmaConnected = false;
+      simRef.current.provider = "sim";
+      setDmaMsg(st.detail);
+      publishWorld(simRef.current.tick(0, settingsRef.current));
+      return;
     }
+    const raw = await pullSnapshot(dmaUrlRef.current);
+    if (!raw) {
+      simRef.current.dmaConnected = false;
+      simRef.current.provider = "sim";
+      setDmaMsg(`SIM — empty snapshot at ${st.detail}`);
+      publishWorld(simRef.current.tick(0, settingsRef.current));
+      return;
+    }
+    const result = simRef.current.ingestSnapshot(raw);
+    simRef.current.dmaConnected = true;
+    simRef.current.provider = st.provider;
+    const world = simRef.current.tick(0, settingsRef.current);
+    if (result.sizeChanged) setMapRev((n) => n + 1);
+    if (world.liveLocal || result.sizeChanged) applyJoinFormat(world);
+    joinRef.current.hadLiveLocal = world.liveLocal;
+    joinRef.current.worldSize = world.worldSize;
+    setDmaMsg(`LIVE ${st.provider}`);
+    publishWorld(world);
   };
 
   const reloadRadar = async () => {
@@ -179,11 +195,14 @@ export function App() {
         applyJoinFormat(world);
         joinRef.current.hadLiveLocal = world.liveLocal;
         joinRef.current.worldSize = world.worldSize;
+        publishWorld(world);
       }
     } else {
       simRef.current.reloadMap(simRef.current.seed);
       setMapRev((n) => n + 1);
-      applyJoinFormat(simRef.current.tick(0, settingsRef.current));
+      const world = simRef.current.tick(0, settingsRef.current);
+      applyJoinFormat(world);
+      publishWorld(world);
     }
   };
 
