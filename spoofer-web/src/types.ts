@@ -61,13 +61,13 @@ export interface LogLine {
 }
 
 export const SECTION_TITLE: Record<SectionId, string> = {
-  storage: "Disk identity",
-  smbios: "SMBIOS / board",
-  network: "NIC / RTL8125B",
+  storage: "Disk",
+  smbios: "Computer",
+  network: "Network",
 };
 
 export const SECTION_SUB: Record<SectionId, string> = {
-  storage: "Serial · model · firmware for the lab disk profile",
-  smbios: "UUID · system serial · board serial · BIOS strings",
-  network: "MAC · IfGuid · IPv4 · Realtek 2.5GbE adapter identity",
+  storage: "Serial number and product name of the main disk",
+  smbios: "Name and serial number of this computer",
+  network: "MAC address and adapter used on the network",
 };

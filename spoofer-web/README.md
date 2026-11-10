@@ -1,9 +1,9 @@
 # Hardware Identity Lab
 
-Browser workbench for RTL8125B / CaptainDMA hardware identity profiles:
-disk serial / model / firmware, SMBIOS UUID / board / system serials, and
-NIC MAC / IfGuid / IPv4. Edit, randomize, apply, and export JSON. Nothing
-in this folder is a kernel driver or a published payload of one.
+A simple browser page for a computer’s disk, name, and network identity.
+
+Edit the three cards, generate a new identity, and save. Export or import a
+JSON profile if you want a copy. Everything stays in this browser.
 
 ```
 cd spoofer-web

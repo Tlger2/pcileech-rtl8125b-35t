@@ -1,8 +1,8 @@
 import type { IdentityProfile } from "./types";
 
 export const DEFAULT_PROFILE: IdentityProfile = {
-  name: "lab-rtl8125b",
-  notes: "CaptainDMA / RTL8125B bring-up identity for local hardware lab work.",
+  name: "My computer",
+  notes: "",
   disks: [
     {
       diskIndex: 0,
