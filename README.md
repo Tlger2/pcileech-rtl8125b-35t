@@ -6,6 +6,13 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 > Target: Xilinx Artix-7 XC7A35T, Xilinx 7-Series integrated PCIe block, FT601 USB 3.0
 > device side, Vivado 2026.1.
 
+## Status (2026-11-10)
+
+- Subsystem ID is now consistent at `0x0123` in both the Vivado IP config (`vivado_build.tcl`) and the soft header.
+- Host `ft601_client.py` offline self-test passes (opcode bijection + frame round-trip).
+- Remaining for closer 1:1 spoof: wire actual MemWr payload into `rtl8125b_bar0_regs` (currently hard-wired to 0), re-enable shadow RAM, and drive MSI from the BAR0 irq pulse. These do not require the card to implement.
+- Hardware bring-up (pinout, timing, full endpoint) still open.
+
 ## Modules
 
 | File | Purpose |
