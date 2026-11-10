@@ -47,6 +47,6 @@ Confirm SPI NOR part and geometry, select a compatible method, and review the ex
 
 FTDI Table 4.2 specifies 1.0 ns setup and 4.8 ns hold for FPGA-driven signals at the FT601. A scratch variant kept these requirements and retimed the pin outputs using a related 100 MHz clock shifted by 3 ns. Receive sampling and the FIFO handshakes stayed on the original clock. All four existing functional simulations passed on that variant. The routed build had −2.666 ns setup and +0.034 ns hold, with the worst setup path from a tristate register to FT601 data bit 27. The timing gate withheld the image. The experimental RTL remains outside this branch.
 
-The BAR0 bench must cover both three- and four-DWORD PCIe read headers. The current endpoint only decodes the four-DWORD form. A scratch three-DWORD decode and test case are awaiting regression execution. A full NIC driver or memory-write test is outside the scope of the current read-only BAR0 check.
+The BAR0 endpoint now decodes both three- and four-DWORD PCIe read headers. The regression checks the original four-DWORD read at offset 0x00 and a three-DWORD read at offset 0x04 with the transmit path stalled. All four XSim benches passed with the BAR0 fix isolated from the experimental FT601 clock changes. Physical MMIO verification remains pending. A full NIC driver or memory-write test is outside the scope of this read-only check.
 
 [FTDI FT600Q/FT601Q FIFO AC timing](https://ftdichip.com/wp-content/uploads/2020/07/DS_FT600Q-FT601Q-IC-Datasheet.pdf)
