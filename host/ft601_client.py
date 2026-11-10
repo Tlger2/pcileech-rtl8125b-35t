@@ -603,8 +603,9 @@ class FT601Client:
         buf = bytearray()
         attempts = 0
         while attempts < max_wait:
-            buf.extend(self._read_raw(4))
-            if len(buf) < 4:
+            chunk = self._read_raw(4)
+            buf.extend(chunk)
+            if len(chunk) < 4:
                 attempts += 1
                 continue
             maybe_magic = struct.unpack("<I", bytes(buf[-4:]))[0]
@@ -612,7 +613,7 @@ class FT601Client:
                 break
             attempts += 1
         else:
-            raise TimeoutError(f"MAGIC not found within {max_wait} DWs")
+            raise TimeoutError(self._magic_timeout_message(buf, max_wait))
 
         # Read HDR + ADDR to learn the payload length
         hdr_addr = self._read_raw(8)
@@ -673,6 +674,35 @@ class FT601Client:
         ))
         rsp = self.recv_frame(expect_payload_dw=length_dw)
         return rsp.payload
+
+    def transport_summary(self) -> str:
+        iface = self._intf_num
+        ep_out = self._ep_out
+        ep_in = self._ep_in
+        return (
+            f"iface={iface} OUT=0x{ep_out:02x} IN=0x{ep_in:02x}"
+            if iface is not None and ep_out is not None and ep_in is not None
+            else "not open"
+        )
+
+    def _magic_timeout_message(self, buf: bytes, max_wait: int) -> str:
+        preview = buf[:16].hex() if buf else "(none)"
+        hint = (
+            "USB bulk write of MAGIC+KEEPALIVE succeeded; the FPGA did not "
+            "return MAGIC 0x5AA5C33C. Stock CaptainDMA speaks PCILeech 0x77, "
+            "not this bitstream. Flash with J2 + vivado_build.tcl / "
+            "vivado_flash.tcl (do not power-cycle after SRAM program)."
+        )
+        if buf[:1] == b"\x77":
+            hint = (
+                "RX starts with 0x77 — that is stock PCILeech FPGA USB, not "
+                "MAGIC 0x5AA5C33C. Flash this repo's bitstream on J2."
+            )
+        return (
+            f"MAGIC not found within {max_wait} DWs "
+            f"({self.transport_summary()}; rx {len(buf)} bytes: {preview}). "
+            f"{hint}"
+        )
 
     def ping(self) -> Frame:
         self.send_frame(Frame(
@@ -751,6 +781,8 @@ class LeechCoreAdapter:
         }
         if self._client is None:
             return info
+        if self._client.is_open:
+            info["usb_transport"] = self._client.transport_summary()
         try:
             info["status"] = self._client.read_dw(DMA_STATUS)
         except Exception as exc:  # hardware optional
@@ -951,6 +983,17 @@ def _selftest() -> None:
     got = loop.ping()
     assert bytes(fake.tx) == ping.to_bytes()
     assert got.opcode == Opcode.KEEPALIVE
+    silent = _FakeUsbDev()
+    loop._dev = silent
+    try:
+        loop.ping()
+        raise AssertionError("expected MAGIC timeout on empty RX")
+    except TimeoutError as exc:
+        msg = str(exc)
+        assert "0x5AA5C33C" in msg
+        assert "rx 0 bytes" in msg
+        assert "vivado_flash.tcl" in msg
+    loop._dev = fake
     # short-read / timeout handling
     fake.rx.extend(b"\x11\x22")
     assert loop._read_raw(8) == b"\x11\x22"
@@ -1213,7 +1256,11 @@ if __name__ == "__main__":
         print(shown)
     if args.ping:
         with _open_or_die() as dev:
-            print(dev.ping())
+            print(dev.transport_summary())
+            try:
+                print(dev.ping())
+            except TimeoutError as exc:
+                raise SystemExit(str(exc)) from exc
     if args.read is not None:
         with _open_or_die() as dev:
             print(f"0x{dev.read_dw(args.read):08X}")

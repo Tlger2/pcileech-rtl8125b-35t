@@ -33,7 +33,11 @@ On the laptop USB-connected to the 35T (`lsusb` shows `0403:601f`).
 prints cfg/iface/alt/ep descriptors and exits 0 if the device is found.
 `--ping` bulk-writes MAGIC+KEEPALIVE on the chosen bulk OUT endpoint and
 waits for an ACK — not `ftdi://`. If open fails, the client prints the
-descriptor dump (do not fail silently).
+descriptor dump (do not fail silently). A MAGIC timeout after a successful
+open means USB is up and the FPGA is not running this bitstream (stock
+cards speak PCILeech `0x77`). Flash with J2 + `vivado_build.tcl` /
+`vivado_flash.tcl`. CaptainDMA FT601 often has bulk `0x02`/`0x82` on
+**iface 1** (iface 0 is bulk OUT + interrupt IN).
 
 ```
 python3 ft601_client.py --selftest
