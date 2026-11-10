@@ -70,10 +70,11 @@ module pcie_top_wrapper (
     );
     BUFG u_ft601_fb_buf (.I(ft601_clk_fb_raw), .O(ft601_clk_fb));
     BUFG u_ft601_io_buf (.I(ft601_io_clk_raw), .O(ft601_io_clk));
-    wire ft601_clock_ready = ft601_rst_n && ft601_io_locked;
 
-    always_ff @(posedge ft601_io_clk or negedge ft601_clock_ready) begin
-        if (!ft601_clock_ready)
+    // The MMCM is held in reset until the bridge is released. LOCKED
+    // directly asserts reset on lock loss, with release synchronized below.
+    always_ff @(posedge ft601_io_clk or negedge ft601_io_locked) begin
+        if (!ft601_io_locked)
             ft601_reset_release <= '0;
         else
             ft601_reset_release <= {ft601_reset_release[0], 1'b1};
