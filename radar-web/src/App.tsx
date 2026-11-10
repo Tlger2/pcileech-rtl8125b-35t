@@ -205,7 +205,6 @@ export function App() {
 
   const classic = settings.classicRadar;
   const sim = simRef.current;
-  const local = snap.localPlayer;
 
   return (
     <div className="app">
@@ -226,7 +225,14 @@ export function App() {
         </div>
       </header>
 
-      <div className="stage">
+      <div
+        className="stage"
+        data-map="rust"
+        data-world-size={snap.worldSize}
+        data-view-scale={view.scale.toFixed(3)}
+        data-view-x={view.x.toFixed(0)}
+        data-view-z={view.z.toFixed(0)}
+      >
         <RadarCanvas
           key={mapRev}
           snapshot={snap}

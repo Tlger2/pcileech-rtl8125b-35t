@@ -1,6 +1,6 @@
 # AtomicDMA — Rust radar (web)
 
-Read-only web radar: full island map in the in-game Rust G-map style (north-up, A–Z grid, player arrow), loot filter, ESP widget, DMA panel, and visual overlays. Layout matches AtomicDMA. **No memory writes** — DMA is snapshot ingest / FT601 identify-read only.
+Read-only web radar matching the AtomicDMA overlay: satellite island, loot filter, ESP widget, DMA panel, chams, and visual ESP. Write-memory cheats (aim assist, recoil, eoka, spiderman, jump-shoot, memory features) are not included. DMA is snapshot ingest / FT601 identify-read only.
 
 ## Run
 
@@ -10,7 +10,7 @@ npm install
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 — starts on a live **SIM** world (seed 1337, size 4000) so the overlay is usable without the card. On SIM start, Reload Map/Radar, and the first DMA `local_player`, the view auto-formats like opening the G-map (~750 m around you). Interactive camera then lets you pan without being pulled back.
+Open http://127.0.0.1:5173 — starts on a live **SIM** world (seed 1337, size 4000). On join / Reload Map, the view centers on you at in-game map scale. Interactive camera then lets you pan.
 
 ## DMA at home
 
