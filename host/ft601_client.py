@@ -369,6 +369,8 @@ class LeechCoreAdapter:
         info = {
             "protocol": "magic-5AA5C33C",
             "pcileech_fpga_tlp_stream": False,
+            "usb_id": "0403:601F",
+            "usb": _usb_present(),
             "vid": DONOR_VID,
             "did": DONOR_DID,
             "rev": DONOR_REV,
@@ -423,6 +425,15 @@ class LeechCoreAdapter:
     def _program_addr(self, pa: int) -> None:
         self._client.write_dw(DMA_ADDR_LO, pa & 0xFFFFFFFF)
         self._client.write_dw(DMA_ADDR_HI, (pa >> 32) & 0xFFFFFFFF)
+
+
+def _usb_present(vid: int = 0x0403, pid: int = 0x601F) -> bool:
+    if not _HAVE_PYFTDI:
+        return False
+    try:
+        return bool(UsbTools.find_all([(vid, pid)]))
+    except Exception:
+        return False
 
 
 def _dsn_from_mac(mac: bytes) -> str:
@@ -494,6 +505,8 @@ def _selftest() -> None:
     ident = LeechCoreAdapter().identify()
     assert ident["vid"] == DONOR_VID and ident["did"] == DONOR_DID
     assert ident["rev"] == DONOR_REV
+    assert ident["usb_id"] == "0403:601F"
+    assert ident["usb"] is False or ident["usb"] is True
     assert ident["pcileech_fpga_tlp_stream"] is False
     assert ident["mac"] == "00:e0:4c:7a:3b:91"
     assert ident["dsn"] == _dsn_from_mac(DONOR_MAC)

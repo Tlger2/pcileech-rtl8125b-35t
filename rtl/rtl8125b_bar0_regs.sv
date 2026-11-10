@@ -1,7 +1,8 @@
 // RTL8125B MAC register file (I/O BAR0 256 B window + MMIO BAR2 64 KiB).
 // Offsets match Linux r8169 / r8125 and Windows rt640x64:
 //   MAC0=0x00, ChipCmd=0x37, TxPoll=0x38, IntrMask=0x3C, IntrStatus=0x3E,
-//   TxConfig=0x40, RxConfig=0x44, Cfg9346=0x50, PHYAR=0x60, PHYstatus=0x6C.
+//   TxConfig=0x40, RxConfig=0x44, Cfg9346=0x50, PHYAR=0x60, PHYstatus=0x6C,
+//   ERIDR=0x70, ERIAR=0x74, EPHYAR=0x80, OCPDR=0xB0, OCPAR=0xB4.
 //
 // TxConfig reset has chip id 0x64Axxxxx so (val & 0x7CF00000) == 0x64A00000
 // (RTL_GIGA_MAC_VER_63 / RTL8125B). PHYAR completes so a PHY probe does not
@@ -50,6 +51,11 @@ module rtl8125b_bar0_regs
     localparam int OFF_CONFIG5    = 8'h56;
     localparam int OFF_PHYAR      = 8'h60;
     localparam int OFF_PHYSTATUS  = 8'h6C;
+    localparam int OFF_ERIDR      = 8'h70;
+    localparam int OFF_ERIAR      = 8'h74;
+    localparam int OFF_EPHYAR     = 8'h80;
+    localparam int OFF_OCPDR      = 8'hB0;
+    localparam int OFF_OCPAR      = 8'hB4;
     localparam int OFF_CPLUSCMD   = 8'hE0;
     localparam int OFF_RXMAXSIZE  = 8'hDA;
     localparam int OFF_RDSAR_LO   = 8'hE4;
@@ -72,6 +78,15 @@ module rtl8125b_bar0_regs
     logic [7:0]  config0_q, config1_q, config2_q, config3_q, config4_q, config5_q;
     logic [15:0] intrmask_q, intrstatus_q;
     logic [31:0] txconfig_q, rxconfig_q, phyar_q, cpluscmd_q;
+    logic [31:0] eridr_q, eriar_q, ephyar_q, ocpdr_q, ocpar_q;
+    logic [31:0] eri_mem [0:255];
+    logic [15:0] ocp_mem [0:255];
+    logic [15:0] ephy_mem [0:31];
+    logic [4:0]  eri_timer_q, ephy_timer_q, ocp_timer_q;
+    logic        eri_pending_q, ephy_pending_q, ocp_pending_q;
+    logic        eri_is_write_q, ephy_is_write_q, ocp_is_write_q;
+    logic [7:0]  eri_idx_q, ocp_idx_q;
+    logic [4:0]  ephy_reg_q;
     logic [15:0] rxmaxsize_q;
     logic [31:0] tnpds_lo_q, tnpds_hi_q, rdsar_lo_q, rdsar_hi_q;
 
@@ -109,6 +124,9 @@ module rtl8125b_bar0_regs
         (byte_off >= OFF_CFG9346 && byte_off <= OFF_CONFIG5) ||
         (byte_off >= OFF_PHYAR && byte_off <= OFF_PHYAR+3) ||
         (byte_off == OFF_PHYSTATUS) ||
+        (byte_off >= OFF_ERIDR && byte_off <= OFF_ERIAR+3) ||
+        (byte_off >= OFF_EPHYAR && byte_off <= OFF_EPHYAR+3) ||
+        (byte_off >= OFF_OCPDR && byte_off <= OFF_OCPAR+3) ||
         (byte_off >= OFF_CPLUSCMD && byte_off <= OFF_CPLUSCMD+3) ||
         (byte_off >= OFF_RXMAXSIZE && byte_off <= OFF_RXMAXSIZE+1) ||
         (byte_off >= OFF_RDSAR_LO && byte_off <= OFF_RDSAR_HI+3)
@@ -202,6 +220,26 @@ module rtl8125b_bar0_regs
                 named_hit   = 1'b1;
                 named_rdata = {24'h0, phystatus};
             end
+            14'h01C: begin  // 0x70 ERIDR
+                named_hit   = 1'b1;
+                named_rdata = eridr_q;
+            end
+            14'h01D: begin  // 0x74 ERIAR
+                named_hit   = 1'b1;
+                named_rdata = eriar_q;
+            end
+            14'h020: begin  // 0x80 EPHYAR
+                named_hit   = 1'b1;
+                named_rdata = ephyar_q;
+            end
+            14'h02C: begin  // 0xB0 OCPDR
+                named_hit   = 1'b1;
+                named_rdata = ocpdr_q;
+            end
+            14'h02D: begin  // 0xB4 OCPAR
+                named_hit   = 1'b1;
+                named_rdata = ocpar_q;
+            end
             14'h036: begin  // 0xD8: RxMaxSize at 0xDA
                 named_hit   = 1'b1;
                 named_rdata = {rxmaxsize_q, 16'h0};
@@ -270,6 +308,29 @@ module rtl8125b_bar0_regs
             phy_regs[3]    <= 16'hC916;  // PHYID2
             phy_regs[4]    <= 16'h0DE1;
             phy_regs[9]    <= 16'h0200;
+            eridr_q        <= 32'h0;
+            eriar_q        <= 32'h0;
+            ephyar_q       <= 32'h0;
+            ocpdr_q        <= 32'h0;
+            ocpar_q        <= 32'h0;
+            eri_timer_q    <= '0;
+            ephy_timer_q   <= '0;
+            ocp_timer_q    <= '0;
+            eri_pending_q  <= 1'b0;
+            ephy_pending_q <= 1'b0;
+            ocp_pending_q  <= 1'b0;
+            eri_is_write_q <= 1'b0;
+            ephy_is_write_q<= 1'b0;
+            ocp_is_write_q <= 1'b0;
+            eri_idx_q      <= '0;
+            ocp_idx_q      <= '0;
+            ephy_reg_q     <= '0;
+            for (int e = 0; e < 256; e++) begin
+                eri_mem[e] <= 32'h0;
+                ocp_mem[e] <= 16'h0;
+            end
+            for (int ep = 0; ep < 32; ep++)
+                ephy_mem[ep] <= 16'h0;
         end else begin
             mem_rvalid <= mem_rd_en;
             irq_pulse  <= 1'b0;
@@ -289,7 +350,7 @@ module rtl8125b_bar0_regs
                 end
             end
 
-            // PHYAR completion: Flag clears on write, sets on read
+            // PHYAR / ERI / EPHY / OCP: Flag clears on write, sets on read
             if (phy_pending_q) begin
                 if (phy_timer_q != 0)
                     phy_timer_q <= phy_timer_q - 1'b1;
@@ -301,6 +362,48 @@ module rtl8125b_bar0_regs
                     end else begin
                         phyar_q[15:0]       <= phy_regs[phy_reg_q];
                         phyar_q[31]         <= 1'b1;
+                    end
+                end
+            end
+            if (eri_pending_q) begin
+                if (eri_timer_q != 0)
+                    eri_timer_q <= eri_timer_q - 1'b1;
+                else begin
+                    eri_pending_q <= 1'b0;
+                    if (eri_is_write_q) begin
+                        eri_mem[eri_idx_q] <= eridr_q;
+                        eriar_q[31]        <= 1'b0;
+                    end else begin
+                        eridr_q            <= eri_mem[eri_idx_q];
+                        eriar_q[31]        <= 1'b1;
+                    end
+                end
+            end
+            if (ephy_pending_q) begin
+                if (ephy_timer_q != 0)
+                    ephy_timer_q <= ephy_timer_q - 1'b1;
+                else begin
+                    ephy_pending_q <= 1'b0;
+                    if (ephy_is_write_q) begin
+                        ephy_mem[ephy_reg_q] <= ephyar_q[15:0];
+                        ephyar_q[31]         <= 1'b0;
+                    end else begin
+                        ephyar_q[15:0]       <= ephy_mem[ephy_reg_q];
+                        ephyar_q[31]         <= 1'b1;
+                    end
+                end
+            end
+            if (ocp_pending_q) begin
+                if (ocp_timer_q != 0)
+                    ocp_timer_q <= ocp_timer_q - 1'b1;
+                else begin
+                    ocp_pending_q <= 1'b0;
+                    if (ocp_is_write_q) begin
+                        ocp_mem[ocp_idx_q] <= ocpdr_q[15:0];
+                        ocpar_q[31]        <= 1'b0;
+                    end else begin
+                        ocpdr_q[15:0]      <= ocp_mem[ocp_idx_q];
+                        ocpar_q[31]        <= 1'b1;
                     end
                 end
             end
@@ -401,6 +504,57 @@ module rtl8125b_bar0_regs
                             // Flag behaviour: writes start with Flag=1; we keep
                             // it set until the timer expires, then clear/set.
                             phyar_q[31]    <= mem_wdata[31];
+                        end
+                    end
+                    14'h01C: begin  // ERIDR
+                        if (mem_be[0]) eridr_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) eridr_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) eridr_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) eridr_q[31:24] <= mem_wdata[31:24];
+                    end
+                    14'h01D: begin  // ERIAR Flag=bit31, addr[11:2] -> 256-entry
+                        if (mem_be[0]) eriar_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) eriar_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) eriar_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) eriar_q[31:24] <= mem_wdata[31:24];
+                        if (mem_be[3] || mem_be[2]) begin
+                            eri_pending_q  <= 1'b1;
+                            eri_timer_q    <= 5'd12;
+                            eri_is_write_q <= mem_wdata[31];
+                            eri_idx_q      <= mem_wdata[11:4];
+                            eriar_q[31]    <= mem_wdata[31];
+                        end
+                    end
+                    14'h020: begin  // EPHYAR
+                        if (mem_be[0]) ephyar_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) ephyar_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) ephyar_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) ephyar_q[31:24] <= mem_wdata[31:24];
+                        if (mem_be[3] || mem_be[2]) begin
+                            ephy_pending_q  <= 1'b1;
+                            ephy_timer_q    <= 5'd12;
+                            ephy_is_write_q <= mem_wdata[31];
+                            ephy_reg_q      <= mem_wdata[20:16];
+                            ephyar_q[31]    <= mem_wdata[31];
+                        end
+                    end
+                    14'h02C: begin  // OCPDR
+                        if (mem_be[0]) ocpdr_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) ocpdr_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) ocpdr_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) ocpdr_q[31:24] <= mem_wdata[31:24];
+                    end
+                    14'h02D: begin  // OCPAR
+                        if (mem_be[0]) ocpar_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) ocpar_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) ocpar_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) ocpar_q[31:24] <= mem_wdata[31:24];
+                        if (mem_be[3] || mem_be[2]) begin
+                            ocp_pending_q  <= 1'b1;
+                            ocp_timer_q    <= 5'd12;
+                            ocp_is_write_q <= mem_wdata[31];
+                            ocp_idx_q      <= mem_wdata[9:2];
+                            ocpar_q[31]    <= mem_wdata[31];
                         end
                     end
                     14'h036: begin

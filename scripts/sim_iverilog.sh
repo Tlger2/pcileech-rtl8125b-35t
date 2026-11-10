@@ -51,6 +51,18 @@ run_tb tb_bar0_regs \
     rtl/rtl8125b_bar0_regs.sv \
     tb/tb_bar0_regs.sv
 
+run_tb tb_ecap_router \
+    rtl/rtl8125b_identity_pkg.sv \
+    rtl/ecap/pcie_ecap_aer.sv \
+    rtl/ecap/pcie_ecap_vc.sv \
+    rtl/ecap/pcie_ecap_dsn.sv \
+    rtl/ecap/pcie_ecap_tph.sv \
+    rtl/ecap/pcie_ecap_ltr.sv \
+    rtl/ecap/pcie_ecap_l1pm.sv \
+    rtl/ecap/pcie_ecap_vsec.sv \
+    rtl/ecap/pcie_ecap_router.sv \
+    tb/tb_ecap_router.sv
+
 run_tb tb_bar_completion \
     rtl/opcode_scramble_pkg.sv \
     rtl/rtl8125b_identity_pkg.sv \

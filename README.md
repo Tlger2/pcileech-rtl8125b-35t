@@ -13,10 +13,11 @@ Live in this tree (no card required to review or sim):
 - Endpoint top restored to a complete synthesizable module (TLP RX, BAR CplD, DMA, FT601 CDC). MemWr payload is captured into the MAC register file; shadow RAM is on; MSI is 1-vector maskable via `pcie_msi_trigger`; MSI-X 32-vector table/PBA sits in BAR4 and `msix_mwr_tx` emits MemWr TLPs.
 - Identity is one package (`rtl/rtl8125b_identity_pkg.sv`): VID/DID 10EC:8125, Rev 05, Class 020000, SVID/SSID 10EC:0123, MAC `00:E0:4C:7A:3B:91`, DSN derived from that MAC. Wrapper `cfg_dsn` is that value, not 0.
 - Soft Type-0 header, BAR decoder, and `vivado_build.tcl` pcie_7x CONFIG agree on BAR0 I/O 256 B, BAR2 64-bit npref 64 KB (MAC), BAR4 64-bit npref 16 KB (MSI-X). Cap chain PM@0x40 → MSI@0x50 → PCIe@0x70 → MSI-X@0xB0 → VPD@0xD0. ECAP: AER@0x100 → VC@0x148 → DSN@0x168 → TPH@0x178 → LTR@0x204 → L1PM@0x20C → VSEC@0x21C.
-- MAC register file uses r8125/r8169 offsets (ChipCmd 0x37, TxPoll 0x38, IntrStatus 0x3e, PHYAR 0x60). TxConfig chip id is `0x64Axxxxx` (RTL8125B). PHYAR completes so a Windows PHY probe does not Code 10.
+- Live `pcie_7x` `cfg_ext` is wired to `pcie_ecap_router` (`EXT_PCI_CFG_Space` must stay true). Unclaimed ECAPs (TPH/LTR/L1PM/VSEC, and DSN if the core did not keep 0x168) answer on silicon. Type-0 / PM / MSI / PCIe / MSI-X are still the integrated block.
+- MAC register file uses r8125/r8169 offsets (ChipCmd 0x37, TxPoll 0x38, IntrStatus 0x3e, PHYAR 0x60, ERIDR/ERIAR 0x70/0x74, EPHYAR 0x80, OCPDR/OCPAR 0xB0/0xB4). TxConfig chip id is `0x64Axxxxx` (RTL8125B). PHY/ERI/EPHY/OCP flags complete so a Windows probe does not Code 10 on those paths.
 - DMA engine issues burst MRd/MWr with a real Length field, up to 32 DW (128 B) / MPS. CplD gather accepts continuation beats and split completions. Host `--selftest` covers READ_BURST length-in-HDR and KEEPALIVE. `LeechCoreAdapter` maps identify/read/write onto the existing MAGIC+opcode path. KEEPALIVE/STATUS/INFO/VERSION/RESET return a 0-DW USB ACK so `--ping` does not hang.
 
-Icarus: `bash scripts/sim_iverilog.sh` (dma 128 B, BAR0 map, BAR CplD, USB response). `tb_endpoint` is XSim-first; iverilog compiles it only.
+Icarus: `bash scripts/sim_iverilog.sh` (dma 128 B, BAR0 map + ERI/OCP/EPHY, ECAP DSN, BAR CplD, USB response). `tb_endpoint` is XSim-first; iverilog compiles it only. `python3 scripts/lspci_check.py --selftest` checks the donor `lspci -xxx` rules.
 
 Still needs the card:
 
@@ -99,6 +100,8 @@ vivado -mode batch -source vivado_build.tcl
 vivado -mode batch -source vivado_flash.tcl
 ```
 
+`wait_on_run` has no 20-second cap (that aborted synth). Do not power-cycle L1 after SRAM program.
+
 `vivado_flash.tcl` JTAG-loads FPGA SRAM (gone on power cycle). For SPI that survives reboot: Hardware Manager → Add Configuration Memory Device → program the `.bit` / generated `.mcs`. There is no `.bit` in this repo; this environment has no Vivado.
 
 ### 2. Laptop USB-connected to the 35T (after the card is up)
@@ -126,11 +129,15 @@ python3 host/ft601_client.py --dma-read 0x1000 128
 
 ```bash
 lspci -nnvvv -d 10ec:8125
+lspci -xxx -d 10ec:8125 > /tmp/8125.xxx
+python3 scripts/lspci_check.py /tmp/8125.xxx
 # IDs 10ec:8125 rev 05, SVID/SSID 10ec:0123
 # BAR0 I/O 256, BAR2 MEM64 64K npref, BAR4 MEM64 16K npref
 # Capabilities: PM@40 → MSI@50 → PCIe@70 → MSI-X@b0 (32 vec, BIR=4, PBA 0x800)
 # ECAP DSN at 0x168 = 0000e04c7a3b9100
 ```
+
+If `lspci_check.py` reports a cap-pointer mismatch, change **`vivado_build.tcl` pcie_7x CONFIG** (not only the soft header), rebuild, reprogram, re-diff. Standard-cap layout is still owned by the Xilinx core; `ip_try_set` skips names 2026.1 does not expose.
 
 ## Build notes
 

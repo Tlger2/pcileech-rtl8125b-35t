@@ -107,6 +107,54 @@ module tb_bar0_regs;
             $display("FAIL PHYAR read PHYID1 %h", got); errors++;
         end
 
+        // ERI 0x70/0x74: write then read back
+        write_be(16'h70, 32'hA5A5_5A5A, 4'hF);
+        write_be(16'h74, 32'h8000_0010, 4'hF);
+        repeat (20) @(negedge clk);
+        read_dw(16'h74, got);
+        if (got[31] !== 1'b0) begin
+            $display("FAIL ERIAR write Flag stuck %h", got); errors++;
+        end
+        write_be(16'h74, 32'h0000_0010, 4'hF);
+        repeat (20) @(negedge clk);
+        read_dw(16'h74, got);
+        if (got[31] !== 1'b1) begin
+            $display("FAIL ERIAR read Flag %h", got); errors++;
+        end
+        read_dw(16'h70, got);
+        if (got !== 32'hA5A5_5A5A) begin
+            $display("FAIL ERIDR %h", got); errors++;
+        end
+
+        // OCP 0xB0/0xB4
+        write_be(16'hB0, 32'h0000_8125, 4'hF);
+        write_be(16'hB4, 32'h8000_00E4, 4'hF);
+        repeat (20) @(negedge clk);
+        read_dw(16'hB4, got);
+        if (got[31] !== 1'b0) begin
+            $display("FAIL OCPAR write Flag stuck %h", got); errors++;
+        end
+        write_be(16'hB4, 32'h0000_00E4, 4'hF);
+        repeat (20) @(negedge clk);
+        read_dw(16'hB0, got);
+        if (got[31] !== 1'b0 || got[15:0] !== 16'h8125) begin
+            $display("FAIL OCPDR %h", got); errors++;
+        end
+
+        // EPHYAR 0x80
+        write_be(16'h80, 32'h8001_00AB, 4'hF);
+        repeat (20) @(negedge clk);
+        read_dw(16'h80, got);
+        if (got[31] !== 1'b0) begin
+            $display("FAIL EPHYAR write Flag stuck %h", got); errors++;
+        end
+        write_be(16'h80, (5'd1 << 16), 4'hF);
+        repeat (20) @(negedge clk);
+        read_dw(16'h80, got);
+        if (got[31] !== 1'b1 || got[15:0] !== 16'h00AB) begin
+            $display("FAIL EPHYAR read %h", got); errors++;
+        end
+
         // Shadow RAM above the named window
         write_be(16'h100, 32'hDEAD_BEEF, 4'hF);
         read_dw(16'h100, got);

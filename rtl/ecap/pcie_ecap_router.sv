@@ -4,8 +4,9 @@
 //   0x100 AER  → 0x148 VC → 0x168 DSN → 0x178 TPH
 //        → 0x204 LTR → 0x20C L1PM → 0x21C VSEC → 0x000
 //
-// Live silicon still belongs to pcie_7x; this module keeps the soft/TB
-// path aligned with the same offsets and DSN/MAC.
+// Live silicon: pcie_top_wrapper wires this to pcie_7x cfg_ext so TPH/LTR/
+// L1PM/VSEC (and DSN if the core did not keep it) answer at these offsets.
+// Type-0 / PM / MSI / PCIe / MSI-X still belong to the integrated block.
 
 module pcie_ecap_router
     import rtl8125b_identity_pkg::*;

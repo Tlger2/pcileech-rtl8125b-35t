@@ -101,6 +101,39 @@ module pcie_top_wrapper (
     assign cfg_max_payload_size = cfg_dcommand[7:5];
     assign cfg_max_read_req_size = cfg_dcommand[14:12];
 
+    // cfg_ext (4 KB unclaimed extended config). The integrated block still
+    // answers Type-0 + its own caps; these ports only fire for offsets the
+    // core does not own (donor TPH@0x178, LTR@0x204, L1PM@0x20C, VSEC@0x21C,
+    // and DSN@0x168 if DSN_Enabled did not stick).
+    logic        cfg_ext_read_received, cfg_ext_write_received;
+    logic [9:0]  cfg_ext_register_number;
+    logic [7:0]  cfg_ext_function_number;
+    logic [31:0] cfg_ext_write_data, cfg_ext_read_data, cfg_ext_ecap_rdata;
+    logic [3:0]  cfg_ext_write_byte_enable;
+    logic        cfg_ext_read_data_valid;
+
+    pcie_ecap_router u_cfg_ext_ecap (
+        .clk        (user_clk_q),
+        .rst_n      (~user_reset_q),
+        .cfg_rd_en  (cfg_ext_read_received),
+        .cfg_wr_en  (cfg_ext_write_received),
+        .cfg_dwaddr (cfg_ext_register_number),
+        .cfg_be     (cfg_ext_write_byte_enable),
+        .cfg_wdata  (cfg_ext_write_data),
+        .cfg_rdata  (cfg_ext_ecap_rdata)
+    );
+
+    always_ff @(posedge user_clk_q or posedge user_reset_q) begin
+        if (user_reset_q) begin
+            cfg_ext_read_data       <= 32'h0;
+            cfg_ext_read_data_valid <= 1'b0;
+        end else begin
+            cfg_ext_read_data_valid <= cfg_ext_read_received;
+            if (cfg_ext_read_received)
+                cfg_ext_read_data <= cfg_ext_ecap_rdata;
+        end
+    end
+
     pcie_7x_0 u_pcie_7x (
         .pci_exp_txp              (pci_exp_txp),
         .pci_exp_txn              (pci_exp_txn),
@@ -208,6 +241,19 @@ module pcie_top_wrapper (
         .cfg_ds_device_number         (5'b0),
         .cfg_ds_function_number       (3'b0),
         .cfg_mgmt_wr_rw1c_as_rw       (1'b0),
+
+        // EXT_PCI_CFG_Space: unclaimed ECAP CfgRd/CfgWr (TPH/LTR/L1PM/VSEC,
+        // and DSN if the core did not keep it) land here. Standard Type-0 /
+        // PM / MSI / PCIe / MSI-X still belong to the integrated block.
+        .cfg_ext_read_received        (cfg_ext_read_received),
+        .cfg_ext_write_received       (cfg_ext_write_received),
+        .cfg_ext_register_number      (cfg_ext_register_number),
+        .cfg_ext_function_number      (cfg_ext_function_number),
+        .cfg_ext_write_data           (cfg_ext_write_data),
+        .cfg_ext_write_byte_enable    (cfg_ext_write_byte_enable),
+        .cfg_ext_read_data            (cfg_ext_read_data),
+        .cfg_ext_read_data_valid      (cfg_ext_read_data_valid),
+
         .pl_directed_link_change      (2'b0),
         .pl_directed_link_width       (2'b0),
         .pl_directed_link_speed       (1'b0),

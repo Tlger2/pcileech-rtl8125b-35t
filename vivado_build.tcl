@@ -126,6 +126,7 @@ set_property -dict [list \
     CONFIG.PCIe_Blk_Locn            {X0Y0} \
     CONFIG.EXT_PCI_CFG_Space        {true} \
 ] $core
+# Wrapper wires cfg_ext_* — do not turn EXT_PCI_CFG_Space off.
 
 # BAR0: I/O 256 B. BAR2: 64-bit npref 64 KB MAC. BAR4: 64-bit npref 16 KB MSI-X.
 ip_try_set $core Bar0_Enabled      true
@@ -257,11 +258,13 @@ foreach name {synth_1 impl_1} {
 }
 proc run_step {name step} {
     launch_runs $name -to_step $step -jobs 4
-    catch {wait_on_run -timeout 20 $name} wait_message
+    # wait_on_run -timeout is seconds. Synth/impl on XC7A35T is many minutes;
+    # a 20 s cap would abort every laptop bitstream.
+    catch {wait_on_run $name} wait_message
     set status [get_property STATUS [get_runs $name]]
     puts "INFO: $name status: $status"
     if {![string match "${step} Complete*" $status]} {
-        error "$name failed or timed out at $step: $status ($wait_message). See [get_property DIRECTORY [get_runs $name]]/runme.log"
+        error "$name failed at $step: $status ($wait_message). See [get_property DIRECTORY [get_runs $name]]/runme.log"
     }
 }
 reset_run synth_1
