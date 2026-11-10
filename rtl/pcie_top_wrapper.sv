@@ -1,4 +1,5 @@
 // Top-level integration for the custom PCIe endpoint on CaptainDMA 35T.
+// cfg_dsn is MAC-derived (Realtek OUI) from rtl8125b_identity_pkg.
 //
 // Instantiates pcie_7x_0 (Xilinx 7-Series Integrated Block for PCIe) and
 // wires every port of pcie_custom_endpoint_top to the correct core signal.
@@ -87,7 +88,7 @@ module pcie_top_wrapper (
 
     logic        cfg_interrupt, cfg_interrupt_rdy, cfg_interrupt_assert;
     logic [7:0]  cfg_interrupt_di, cfg_interrupt_do;
-    logic        cfg_interrupt_msienable, cfg_interrupt_msixenable;
+    logic        cfg_interrupt_msienable, cfg_interrupt_msixenable, cfg_interrupt_msixfm;
     logic [2:0]  cfg_interrupt_mmenable;
 
     // Link Status register — bits[3:0] = current link speed, bits[9:4] = width
@@ -165,7 +166,7 @@ module pcie_top_wrapper (
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_msixenable (cfg_interrupt_msixenable),
-        .cfg_interrupt_msixfm     (),
+        .cfg_interrupt_msixfm     (cfg_interrupt_msixfm),
         .cfg_interrupt_stat       (1'b0),
         .cfg_pciecap_interrupt_msgnum (5'h0),
 
@@ -202,7 +203,7 @@ module pcie_top_wrapper (
         // Defaults from the generated core for unused interfaces.
         .cfg_trn_pending              (1'b0),
         .cfg_turnoff_ok               (1'b0),
-        .cfg_dsn                      (64'b0),
+        .cfg_dsn                      (rtl8125b_identity_pkg::CFG_DSN),
         .cfg_ds_bus_number            (8'b0),
         .cfg_ds_device_number         (5'b0),
         .cfg_ds_function_number       (3'b0),
@@ -258,6 +259,8 @@ module pcie_top_wrapper (
         .cfg_interrupt_di         (cfg_interrupt_di),
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
+        .cfg_interrupt_msixenable (cfg_interrupt_msixenable),
+        .cfg_interrupt_msixfm     (cfg_interrupt_msixfm),
 
         .ft601_clk                (ft601_clk),
         .ft601_rst_n              (ft601_reset_release[1]),

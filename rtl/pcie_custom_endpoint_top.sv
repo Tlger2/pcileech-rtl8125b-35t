@@ -13,7 +13,13 @@
 
 `timescale 1ns/1ps
 
-module pcie_custom_endpoint_top (
+module pcie_custom_endpoint_top
+    import rtl8125b_identity_pkg::*;
+#(
+    parameter bit ENABLE_TLP_JITTER = 1'b0,
+    parameter bit ENABLE_SHADOW     = 1'b1,
+    parameter logic [47:0] MAC_ADDR = rtl8125b_identity_pkg::MAC_ADDR
+) (
     // ---- PCIe user interface (user_clk domain) ----
     input  logic        user_clk,
     input  logic        user_reset,
@@ -49,6 +55,8 @@ module pcie_custom_endpoint_top (
     output logic  [7:0] cfg_interrupt_di,
     input  logic        cfg_interrupt_msienable,
     input  logic  [2:0] cfg_interrupt_mmenable,
+    input  logic        cfg_interrupt_msixenable,
+    input  logic        cfg_interrupt_msixfm,
 
     // ---- FT601 USB3 (ft601_clk domain) ----
     input  logic        ft601_clk,
@@ -278,6 +286,7 @@ dma_engine u_dma (
     .rf_rdata        (rf_rdata_uc),
     .rf_rvalid       (rf_rvalid_uc),
     .cfg_completer_id(cfg_completer_id),
+    .cfg_max_payload_size(cfg_max_payload_size),
     .tx_req_valid    (dma_tx_valid),
     .tx_req_ready    (dma_tx_ready),
     .tx_req_data     (dma_tx_data),
@@ -292,12 +301,16 @@ dma_engine u_dma (
     .dma_hold_req    (dma_hold_req)
 );
 
+// Jitter is off the default NIC/DMA path. Enabling it delays DMA MRd
+// issue only; BAR completions still look like a NIC.
+logic jitter_hold;
 tlp_jitter_fsm u_jitter (
     .clk         (user_clk),
     .rst_n       (user_rst_n),
     .dma_cpl_seen(dma_cpl_seen),
-    .dma_hold_req(dma_hold_req)
+    .dma_hold_req(jitter_hold)
 );
+assign dma_hold_req = ENABLE_TLP_JITTER ? jitter_hold : 1'b0;
 
 // =============================================================================
 // SECTION 6 — TLP RX parser  (#1 fix: capture beat1 → rx_dw2/rx_dw3)
@@ -312,8 +325,10 @@ logic        rx_hdr_valid_q;    // header fully captured (pulses the next cycle)
 typedef enum logic [1:0] { RX_HDR0, RX_HDR1, RX_PAY } rx_phase_e;
 rx_phase_e rx_phase_q;
 logic      rx_in_pkt_q;
-logic      rx_pkt_cpld_q, rx_pkt_memwr_q;
+logic      rx_pkt_cpld_q, rx_pkt_memwr_q, rx_pkt_iowr_q;
 logic      rx_pay_latched_q;
+logic [6:0] rx_bar_hit_q;
+logic       rx_hdr_4dw_q;
 
 // (#2 fix: rx_active from AXI-Stream)
 logic rx_active;
@@ -322,11 +337,12 @@ assign rx_active = m_axis_rx_tvalid;
 // Live beat-0 decode (m_axis_rx_tdata[31:0] is DW0 on the first beat).
 logic [1:0] live_fmt;
 logic [4:0] live_type;
-logic       live_is_cpld, live_is_memwr;
+logic       live_is_cpld, live_is_memwr, live_is_iowr;
 assign live_fmt      = m_axis_rx_tdata[30:29];
 assign live_type     = m_axis_rx_tdata[28:24];
 assign live_is_cpld  = (live_fmt == 2'b10) && (live_type == 5'b01010);
-assign live_is_memwr = (live_fmt == 2'b11) && (live_type == 5'b00000);
+assign live_is_memwr = (live_type == 5'b00000) && live_fmt[1];          // 3DW or 4DW MemWr
+assign live_is_iowr  = (live_type == 5'b00010) && live_fmt[1];          // IOWr
 
 // Held class. On beat 0 (rx_in_pkt_q == 0) the live DW0 is the class.
 logic rx_is_cpld;
@@ -337,15 +353,23 @@ assign rx_is_cpld = rx_in_pkt_q ? rx_pkt_cpld_q : live_is_cpld;
 logic [1:0] rx_fmt;
 logic [4:0] rx_type;
 logic [9:0] rx_length;
-logic       rx_is_memrd;
+logic       rx_is_memrd, rx_is_iord, rx_is_bar_rd;
 assign rx_fmt      = rx_dw0_q[30:29];
 assign rx_type     = rx_dw0_q[28:24];
 assign rx_length   = rx_dw0_q[9:0];
-assign rx_is_memrd = (rx_fmt == 2'b01) && (rx_type == 5'b00000);
+assign rx_is_memrd = (rx_type == 5'b00000) && !rx_fmt[1];               // 3DW or 4DW MemRd
+assign rx_is_iord  = (rx_type == 5'b00010) && !rx_fmt[1];
+assign rx_is_bar_rd = rx_is_memrd || rx_is_iord;
 
-// BAR0 hit: requester is EAC/host probing our BAR0 (addr[27:16] == 0 for 64K)
+// Address: 4DW Mem uses DW3 as low; 3DW Mem/IO uses DW2 as low.
 logic [31:0] rx_bar0_addr;
-assign rx_bar0_addr = rx_dw3_q;   // lower 32 bits of 4DW address
+assign rx_bar0_addr = rx_hdr_4dw_q ? rx_dw3_q : rx_dw2_q;
+
+// tuser[8:2] = {EXPROM, BAR5..BAR0}. Empty tuser (TB) falls back to MAC BAR.
+logic hit_io, hit_mac, hit_msix;
+assign hit_io   = rx_bar_hit_q[0];
+assign hit_mac  = rx_bar_hit_q[2] || (rx_bar_hit_q == 7'h0 && !hit_msix);
+assign hit_msix = rx_bar_hit_q[4];
 
 // requester ID and tag for BAR0 CplD
 logic [15:0] rx_req_id;
@@ -364,7 +388,10 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         rx_in_pkt_q     <= 1'b0;
         rx_pkt_cpld_q   <= 1'b0;
         rx_pkt_memwr_q  <= 1'b0;
+        rx_pkt_iowr_q   <= 1'b0;
         rx_pay_latched_q <= 1'b0;
+        rx_bar_hit_q    <= 7'h0;
+        rx_hdr_4dw_q    <= 1'b1;
     end else begin
         rx_hdr_valid_q <= 1'b0;
         if (m_axis_rx_tvalid && !rx_in_pkt_q) begin
@@ -372,7 +399,10 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
             rx_dw0_q       <= m_axis_rx_tdata[31:0];
             rx_dw1_q       <= m_axis_rx_tdata[63:32];
             rx_pkt_cpld_q  <= live_is_cpld;
-            rx_pkt_memwr_q <= live_is_memwr;
+            rx_pkt_memwr_q <= live_is_memwr || live_is_iowr;
+            rx_pkt_iowr_q  <= live_is_iowr;
+            rx_bar_hit_q   <= m_axis_rx_tuser[8:2];
+            rx_hdr_4dw_q   <= live_fmt[0];
             rx_pay_latched_q <= 1'b0;
             if (m_axis_rx_tlast) begin
                 rx_in_pkt_q <= 1'b0;
@@ -382,7 +412,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 rx_phase_q  <= RX_HDR1;
             end
         end else if (m_axis_rx_tvalid && rx_phase_q == RX_HDR1) begin
-            // Beat 1: {DW3, DW2}. A header-only TLP (MemRd) ends here.
+            // Beat 1: 4DW {DW3, DW2}; 3DW write {data, addr}.
             rx_dw2_q       <= m_axis_rx_tdata[31:0];
             rx_dw3_q       <= m_axis_rx_tdata[63:32];
             rx_hdr_valid_q <= 1'b1;
@@ -447,41 +477,59 @@ logic        irq_pulse;
 assign bar0_byte_addr = rx_bar0_addr[15:0];
 assign bar0_wdata     = bar0_wdata_q;
 assign bar0_be        = bar0_be_q;
-assign bar0_mem_wr_en = bar0_mem_wr_en_q;
+assign bar0_mem_wr_en = bar0_mem_wr_en_q && (hit_mac || hit_io);
 
-// Trigger BAR0 read when header is fully captured and it's a MemRd.
-logic bar0_rd_pending_q;
+logic        msix_mem_wr_en, msix_mem_rd_en;
+logic        msix_rvalid;
+logic [31:0] msix_rdata;
+assign msix_mem_wr_en = bar0_mem_wr_en_q && hit_msix;
 
-assign bar0_rd_pending_set = rx_hdr_valid_q && rx_is_memrd;
+// Trigger MAC/MSI-X read when header is fully captured and it's a read TLP.
+logic bar0_rd_pending_q, msix_rd_pending_q;
+
+assign bar0_rd_pending_set = rx_hdr_valid_q && rx_is_bar_rd && (hit_mac || hit_io);
 assign bar0_mem_rd_en      = bar0_rd_pending_q;
+assign msix_mem_rd_en      = msix_rd_pending_q;
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
         bar0_rd_pending_q <= 1'b0;
+        msix_rd_pending_q <= 1'b0;
         bar0_wdata_q      <= 32'h0;
         bar0_be_q         <= 4'h0;
         bar0_mem_wr_en_q  <= 1'b0;
         bar0_wr_pend_q    <= 1'b0;
     end else begin
-        // Pulse one cycle after the payload latch (bar0_wr_pend_q is the
-        // previous cycle's request). Default-clear, then maybe re-arm.
         bar0_mem_wr_en_q <= bar0_wr_pend_q;
         bar0_wr_pend_q   <= 1'b0;
 
         if (bar0_rd_pending_set)      bar0_rd_pending_q <= 1'b1;
         else if (bar0_rvalid)         bar0_rd_pending_q <= 1'b0;
 
-        // First payload DW of a 4DW MemWr. First BE lives in captured DW1[3:0].
-        if (m_axis_rx_tvalid && rx_in_pkt_q && rx_phase_q == RX_PAY &&
-            rx_pkt_memwr_q && !rx_pay_latched_q) begin
-            bar0_wdata_q   <= m_axis_rx_tdata[31:0];
-            bar0_be_q      <= rx_dw1_q[3:0];
-            bar0_wr_pend_q <= 1'b1;
+        if (rx_hdr_valid_q && rx_is_bar_rd && hit_msix)
+            msix_rd_pending_q <= 1'b1;
+        else if (msix_rvalid)
+            msix_rd_pending_q <= 1'b0;
+
+        // 4DW MemWr payload on RX_PAY; 3DW IOWr/MemWr payload on HDR1 high half.
+        if (m_axis_rx_tvalid && rx_pkt_memwr_q && !rx_pay_latched_q) begin
+            if (rx_phase_q == RX_PAY) begin
+                bar0_wdata_q   <= m_axis_rx_tdata[31:0];
+                bar0_be_q      <= rx_dw1_q[3:0];
+                bar0_wr_pend_q <= 1'b1;
+            end else if (rx_phase_q == RX_HDR1 && m_axis_rx_tlast && !rx_hdr_4dw_q) begin
+                bar0_wdata_q   <= m_axis_rx_tdata[63:32];
+                bar0_be_q      <= rx_dw1_q[3:0];
+                bar0_wr_pend_q <= 1'b1;
+            end
         end
     end
 end
 
-rtl8125b_bar0_regs #(.ENABLE_SHADOW(1'b0)) u_bar0 (
+rtl8125b_bar0_regs #(
+    .ENABLE_SHADOW(ENABLE_SHADOW),
+    .MAC_ADDR     (MAC_ADDR)
+) u_bar0 (
     .clk               (user_clk),
     .rst_n             (user_rst_n),
     .mem_wr_en         (bar0_mem_wr_en),
@@ -496,22 +544,78 @@ rtl8125b_bar0_regs #(.ENABLE_SHADOW(1'b0)) u_bar0 (
     .irq_pulse         (irq_pulse)
 );
 
-// MSI request to the 7-series integrated block. irq_pulse is already in
-// user_clk (the PCIe core's user clock), so src_clk and pcie_clk match.
-// cfg_interrupt is held until cfg_interrupt_rdy. cfg_interrupt_assert stays
-// low (MSI, not legacy INTx). cfg_interrupt_di carries the vector number.
+logic [$clog2(MSIX_VECTORS)-1:0] msix_vec_idx;
+logic [63:0] msix_vec_addr;
+logic [31:0] msix_vec_data;
+logic        msix_vec_mask;
+logic [MSIX_VECTORS-1:0] msix_pba_set, msix_pba_clr, msix_pba_bits;
+logic [MSIX_VECTORS-1:0] msix_irq_bus;
+assign msix_irq_bus = {{(MSIX_VECTORS-1){1'b0}}, irq_pulse};
+
+msix_table_pba #(
+    .NUM_VECTORS         (MSIX_VECTORS),
+    .TABLE_BAR_BYTE_BASE (MSIX_TABLE_BYTE_OFF),
+    .PBA_BAR_BYTE_BASE   (MSIX_PBA_BYTE_OFF)
+) u_msix_tbl (
+    .clk           (user_clk),
+    .rst_n         (user_rst_n),
+    .mem_wr_en     (msix_mem_wr_en),
+    .mem_rd_en     (msix_mem_rd_en),
+    .mem_byte_addr (bar0_byte_addr),
+    .mem_wdata     (bar0_wdata),
+    .mem_be        (bar0_be),
+    .mem_rdata     (msix_rdata),
+    .mem_rvalid    (msix_rvalid),
+    .vec_rd_idx    (msix_vec_idx),
+    .vec_addr      (msix_vec_addr),
+    .vec_data      (msix_vec_data),
+    .vec_mask      (msix_vec_mask),
+    .pba_set       (msix_pba_set),
+    .pba_clear     (msix_pba_clr),
+    .pba_bits      (msix_pba_bits)
+);
+
+logic [63:0] msix_tx_data;
+logic [7:0]  msix_tx_keep;
+logic        msix_tx_valid, msix_tx_last, msix_tx_ready;
+logic [3:0]  msix_tx_user;
+logic        msix_tx_busy;
+
+msix_mwr_tx #(.NUM_VECTORS(MSIX_VECTORS)) u_msix_tx (
+    .clk              (user_clk),
+    .rst_n            (user_rst_n),
+    .irq_req          (msix_irq_bus),
+    .msix_enable      (cfg_interrupt_msixenable),
+    .function_mask    (cfg_interrupt_msixfm),
+    .vec_rd_idx       (msix_vec_idx),
+    .vec_addr         (msix_vec_addr),
+    .vec_data         (msix_vec_data),
+    .vec_mask         (msix_vec_mask),
+    .pba_set          (msix_pba_set),
+    .pba_clear        (msix_pba_clr),
+    .completer_id     (cfg_completer_id),
+    .s_axis_tx_tdata  (msix_tx_data),
+    .s_axis_tx_tkeep  (msix_tx_keep),
+    .s_axis_tx_tvalid (msix_tx_valid),
+    .s_axis_tx_tlast  (msix_tx_last),
+    .s_axis_tx_tuser  (msix_tx_user),
+    .s_axis_tx_tready (msix_tx_ready),
+    .busy             (msix_tx_busy)
+);
+
+// MSI: 1 vector, maskable. Core handshake is unused while MSI-X is armed.
 pcie_msi_trigger #(
-    .NUM_VECTORS(8),
+    .NUM_VECTORS(1),
     .STRETCH_CYC(4)
 ) u_msi (
     .pcie_clk               (user_clk),
     .pcie_rst_n             (user_rst_n),
     .src_clk                (user_clk),
-    .irq_req                ({7'b0, irq_pulse}),
-    .vector_mask            (8'h00),
+    .irq_req                (irq_pulse),
+    .vector_mask            (1'b0),
     .cfg_interrupt          (cfg_interrupt),
     .cfg_interrupt_rdy      (cfg_interrupt_rdy),
-    .cfg_interrupt_msienable(cfg_interrupt_msienable),
+    .cfg_interrupt_msienable(cfg_interrupt_msienable && !cfg_interrupt_msixenable),
     .cfg_interrupt_mmenable (cfg_interrupt_mmenable),
     .cfg_interrupt_assert   (cfg_interrupt_assert),
     .cfg_interrupt_di       (cfg_interrupt_di),
@@ -527,6 +631,11 @@ bar_tx_state_t bar_tx_q;
 logic [63:0] bar_tx_data_q, bar_tx_payload_q;
 wire bar_tx_last = bar_tx_q == BAR_B1;
 
+logic        bar_cpl_fire;
+logic [31:0] bar_cpl_data;
+assign bar_cpl_fire = bar0_rvalid || msix_rvalid;
+assign bar_cpl_data = msix_rvalid ? msix_rdata : bar0_rdata;
+
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
         bar_tx_q         <= BAR_IDLE;
@@ -534,12 +643,12 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         bar_tx_payload_q <= '0;
     end else begin
         case (bar_tx_q)
-            BAR_IDLE: if (bar0_rvalid) begin
+            BAR_IDLE: if (bar_cpl_fire) begin
                 bar_tx_data_q <= {cfg_completer_id, 3'b000, 1'b0, 12'd4, CPLD_DW0};
                 // Lower Address is the DWORD-aligned byte offset of the first
                 // returned byte (PCIe CplD DW2[6:0]).
                 bar_tx_payload_q <= {
-                    bar0_rdata, rx_req_id, rx_tag, 1'b0,
+                    bar_cpl_data, rx_req_id, rx_tag, 1'b0,
                     rx_bar0_addr[6:2], 2'b00
                 };
                 bar_tx_q <= BAR_B0;
@@ -564,15 +673,20 @@ logic bar_tx_active;
 assign bar_tx_active = (bar_tx_q != BAR_IDLE);
 
 always_comb begin
+    msix_tx_ready = 1'b0;
+    dma_tx_ready  = 1'b0;
     if (bar_tx_active) begin
-        // BAR0 CplD wins
         s_axis_tx_tdata  = bar_tx_data_q;
         s_axis_tx_tkeep  = 8'hff;
         s_axis_tx_tvalid = 1'b1;
         s_axis_tx_tlast  = bar_tx_last;
-        dma_tx_ready     = 1'b0;
+    end else if (msix_tx_valid) begin
+        s_axis_tx_tdata  = msix_tx_data;
+        s_axis_tx_tkeep  = msix_tx_keep;
+        s_axis_tx_tvalid = 1'b1;
+        s_axis_tx_tlast  = msix_tx_last;
+        msix_tx_ready    = s_axis_tx_tready;
     end else begin
-        // DMA engine has the bus
         s_axis_tx_tdata  = dma_tx_data;
         s_axis_tx_tkeep  = dma_tx_keep;
         s_axis_tx_tvalid = dma_tx_valid && !dma_hold_req;
