@@ -72,8 +72,8 @@ module rtl8125b_bar0_regs #(
     assign dw_idx  = mem_byte_addr[15:2];
     assign reg_off = mem_byte_addr[7:0];
 
-    // The current endpoint does not deliver Memory Write payloads. It can
-    // omit this storage while keeping unmapped offsets at their reset value.
+    // Named registers are updated from mem_wdata/mem_be. Unmapped offsets
+    // stick in this shadow only when ENABLE_SHADOW is set.
     if (ENABLE_SHADOW) begin : gen_shadow
         logic [31:0] shadow_mem [0:16383];
         wire named_write = reg_off == REG_MAC0 || reg_off == REG_MAC4 ||

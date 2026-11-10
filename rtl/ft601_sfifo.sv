@@ -61,8 +61,10 @@ module ft601_sfifo (
                 else if (rx_request)
                     next_state = RX_OE;
             end
-            RX_OE: next_state = ft601_rxf_n ? TURN : RX_READ;
-            TX_SETUP: next_state = ft601_txe_n ? TURN : TX_WRITE;
+            // Explicit enum cast: the ternary result is not self-determined
+            // as state_t under Icarus Verilog, and the cast is a no-op in Vivado.
+            RX_OE: next_state = state_t'(ft601_rxf_n ? TURN : RX_READ);
+            TX_SETUP: next_state = state_t'(ft601_txe_n ? TURN : TX_WRITE);
             RX_READ, TX_WRITE: next_state = TURN;
             default: next_state = IDLE;
         endcase

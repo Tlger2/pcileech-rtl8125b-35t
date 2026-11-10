@@ -30,13 +30,26 @@ module pcie_msi_trigger #(
     output logic [NUM_VECTORS-1:0]   pending,
     output logic                     busy
 );
+    // --- Reset synchronized into src_clk (async assert, sync deassert) ---
+    (* ASYNC_REG = "TRUE" *) logic [1:0] src_rst_sync;
+    always_ff @(posedge src_clk or negedge pcie_rst_n) begin
+        if (!pcie_rst_n)
+            src_rst_sync <= 2'b00;
+        else
+            src_rst_sync <= {src_rst_sync[0], 1'b1};
+    end
+    wire src_rst_n = src_rst_sync[1];
+
     // --- Source-domain stretcher ---
     logic [NUM_VECTORS-1:0] stretched;
     generate
         for (genvar v = 0; v < NUM_VECTORS; v++) begin : g_stretch
             logic [$clog2(STRETCH_CYC+1)-1:0] cnt;
-            always_ff @(posedge src_clk) begin
-                if (irq_req[v]) begin
+            always_ff @(posedge src_clk or negedge src_rst_n) begin
+                if (!src_rst_n) begin
+                    stretched[v] <= 1'b0;
+                    cnt          <= '0;
+                end else if (irq_req[v]) begin
                     stretched[v] <= 1'b1;
                     cnt          <= STRETCH_CYC[$clog2(STRETCH_CYC+1)-1:0];
                 end else if (cnt != '0) begin
