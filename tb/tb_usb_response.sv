@@ -36,6 +36,7 @@ module tb_usb_response;
         .link_width_live(6'd1), .cfg_interrupt(), .cfg_interrupt_rdy(1'b0),
         .cfg_interrupt_assert(), .cfg_interrupt_di(),
         .cfg_interrupt_msienable(1'b0), .cfg_interrupt_mmenable(3'b0),
+        .cfg_interrupt_msixenable(1'b0), .cfg_interrupt_msixfm(1'b0),
         .ft601_clk(ft601_clk), .ft601_rst_n(!user_reset), .ft601_rxf_n(rxf_n),
         .ft601_oe_n(oe_n), .ft601_rd_n(rd_n), .ft601_wr_n(wr_n), .ft601_txe_n(txe_n),
         .ft601_data(bus_data), .ft601_be(bus_be)

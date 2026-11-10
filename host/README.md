@@ -33,15 +33,23 @@ python ft601_client.py --read  0x00001000
 python ft601_client.py --write 0x00001000 0xDEADBEEF
 ```
 
-Or from your own script:
+LeechCore-shaped identify/read/write on the same MAGIC path (does not
+speak native MemProcFS `fpga://`, which is the PCILeech 0x77 TLP stream):
+
+```
+python ft601_client.py --identify
+```
 
 ```python
-from ft601_client import FT601Client, Opcode
+from ft601_client import FT601Client, Opcode, LeechCoreAdapter
 
 with FT601Client() as dev:
     dev.write_dw(0x0000_1000, 0xDEAD_BEEF)
     print(hex(dev.read_dw(0x0000_1000)))
     block = dev.read_burst(0x0000_2000, 16)
+    lc = LeechCoreAdapter(dev)
+    print(lc.identify())
+    phys = lc.read(0x1000, 128)
 ```
 
 ## Protocol

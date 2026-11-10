@@ -318,6 +318,107 @@ class FT601Client:
         ))
 
 
+# DMA engine register file (byte addresses on the MAGIC/opcode path).
+DMA_CTRL = 0x00
+DMA_ADDR_LO = 0x04
+DMA_ADDR_HI = 0x08
+DMA_WDATA = 0x0C
+DMA_STATUS = 0x10
+DMA_RDATA = 0x14
+DMA_LENGTH = 0x18
+DMA_BUF = 0x40
+DMA_MAX_DW = 32  # 128 B; matches dma_engine MAX_BURST_DW
+DMA_GO_READ = 0x1
+DMA_GO_WRITE = 0x2
+
+# Donor identity (must match rtl/rtl8125b_identity_pkg.sv)
+DONOR_VID = 0x10EC
+DONOR_DID = 0x8125
+DONOR_REV = 0x05
+DONOR_SVID = 0x10EC
+DONOR_SSID = 0x0123
+DONOR_MAC = bytes((0x00, 0xE0, 0x4C, 0x7A, 0x3B, 0x91))
+
+
+class LeechCoreAdapter:
+    """MemProcFS/LeechCore-shaped identify / read / write on this firmware's
+    FT601 MAGIC + scrambled-opcode path.
+
+    ReaderRadar and stock MemProcFS `fpga://` speak the PCILeech-FPGA USB
+    dialect (0x77 FIFO + raw TLP stream). This bitstream does not. Use this
+    adapter (or ft601_client.FT601Client) against the CaptainDMA FT601 once
+    the card is up. Opcode bijection with opcode_scramble_pkg is unchanged.
+    """
+
+    def __init__(self, client: FT601Client | None = None):
+        self._client = client
+
+    def identify(self) -> dict:
+        info = {
+            "protocol": "magic-5AA5C33C",
+            "pcileech_fpga_tlp_stream": False,
+            "vid": DONOR_VID,
+            "did": DONOR_DID,
+            "rev": DONOR_REV,
+            "svid": DONOR_SVID,
+            "ssid": DONOR_SSID,
+            "mac": DONOR_MAC.hex(":"),
+            "dsn": _dsn_from_mac(DONOR_MAC),
+            "max_read_bytes": DMA_MAX_DW * 4,
+            "fpga_id": "rtl8125b-35t",
+        }
+        if self._client is None:
+            return info
+        try:
+            info["status"] = self._client.read_dw(DMA_STATUS)
+        except Exception as exc:  # hardware optional
+            info["status_error"] = str(exc)
+        return info
+
+    def read(self, pa: int, size: int) -> bytes:
+        if self._client is None:
+            raise RuntimeError("FT601 client is required for DMA read")
+        if size < 0:
+            raise ValueError("size must be >= 0")
+        out = bytearray()
+        while size:
+            chunk = min(size, DMA_MAX_DW * 4)
+            dws = (chunk + 3) // 4
+            self._program_addr(pa)
+            self._client.write_dw(DMA_LENGTH, dws)
+            self._client.write_dw(DMA_CTRL, DMA_GO_READ)
+            words = self._client.read_burst(DMA_BUF, dws)
+            raw = b"".join(struct.pack("<I", w) for w in words)
+            out.extend(raw[:chunk])
+            pa += chunk
+            size -= chunk
+        return bytes(out)
+
+    def write(self, pa: int, data: bytes) -> None:
+        if self._client is None:
+            raise RuntimeError("FT601 client is required for DMA write")
+        off = 0
+        while off < len(data):
+            chunk = data[off:off + DMA_MAX_DW * 4]
+            padded = chunk + bytes((4 - (len(chunk) % 4)) % 4)
+            words = list(struct.unpack(f"<{len(padded)//4}I", padded))
+            self._program_addr(pa + off)
+            self._client.write_dw(DMA_LENGTH, len(words))
+            self._client.write_burst(DMA_BUF, words)
+            self._client.write_dw(DMA_CTRL, DMA_GO_WRITE)
+            off += len(chunk)
+
+    def _program_addr(self, pa: int) -> None:
+        self._client.write_dw(DMA_ADDR_LO, pa & 0xFFFFFFFF)
+        self._client.write_dw(DMA_ADDR_HI, (pa >> 32) & 0xFFFFFFFF)
+
+
+def _dsn_from_mac(mac: bytes) -> str:
+    dsn_lo = (mac[3] << 24) | (mac[4] << 16) | (mac[5] << 8)
+    dsn_hi = (mac[0] << 16) | (mac[1] << 8) | mac[2]
+    return f"{dsn_hi:08x}{dsn_lo:08x}"
+
+
 # ------------------------------------------------------------------
 # Self-test: offline bijection + round-trip framing (no hardware)
 # ------------------------------------------------------------------
@@ -346,6 +447,25 @@ def _selftest() -> None:
     assert f2.opcode == Opcode.WRITE_BURST
     assert f2.address == 0x0000_1000
     assert f2.payload == f.payload
+
+    ident = LeechCoreAdapter().identify()
+    assert ident["vid"] == DONOR_VID and ident["did"] == DONOR_DID
+    assert ident["rev"] == DONOR_REV
+    assert ident["pcileech_fpga_tlp_stream"] is False
+    assert ident["mac"] == "00:e0:4c:7a:3b:91"
+    assert ident["dsn"] == _dsn_from_mac(DONOR_MAC)
+    assert ident["max_read_bytes"] == 128
+
+    # Adapter read/write require a client; packing of a 128 B burst is
+    # still checked through Frame so the DMA LENGTH path stays aligned.
+    burst = Frame(
+        opcode=Opcode.WRITE_BURST,
+        flags=0,
+        address=DMA_BUF,
+        payload=list(range(DMA_MAX_DW)),
+    )
+    assert burst.length_dw == DMA_MAX_DW
+    assert (burst.to_bytes()[4] & 0xFF) == DMA_MAX_DW  # length_dw low byte
     print("ft601_client self-test: OK")
 
 
@@ -361,10 +481,18 @@ if __name__ == "__main__":
     ap.add_argument("--write", nargs=2, type=lambda x: int(x, 0),
                     metavar=("ADDR", "VALUE"),
                     help="write one DW to the given address")
+    ap.add_argument("--identify", action="store_true",
+                    help="print LeechCore-shaped identify (offline if no FT601)")
     args = ap.parse_args()
 
     if args.selftest:
         _selftest()
+    if args.identify:
+        try:
+            with FT601Client() as dev:
+                print(LeechCoreAdapter(dev).identify())
+        except Exception:
+            print(LeechCoreAdapter().identify())
     if args.ping:
         with FT601Client() as dev:
             print(dev.ping())
