@@ -1,9 +1,11 @@
-# Hardware Identity Lab
+# Identity Lab
 
-A simple browser page for a computer’s disk, name, and network identity.
+Browser page for this computer’s disk serial, board/UUID, and MAC address.
 
-Edit the three cards, generate a new identity, and save. Export or import a
-JSON profile if you want a copy. Everything stays in this browser.
+> in the end you are never truly banned
+> — Hellon Wong
+
+**HWID SPOOF** randomizes the identity and marks DiskDrive, SMBIOS, and MACAddress as Spoofed. **CLEAN** restores the stock identity. Click a hardware row or Details to edit a serial, UUID, or MAC. Profiles stay in this browser.
 
 ```
 cd spoofer-web

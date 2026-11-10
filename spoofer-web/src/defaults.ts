@@ -1,4 +1,8 @@
-import type { IdentityProfile } from "./types";
+import { CLEAN_FLAGS, type HwFlags, type IdentityProfile } from "./types";
+
+export const QUOTE = "in the end you are never truly banned";
+export const ATTRIBUTION = "Hellon Wong";
+export const APP_TITLE = "Identity Lab";
 
 export const DEFAULT_PROFILE: IdentityProfile = {
   name: "My computer",
@@ -70,4 +74,12 @@ export function randomizeProfile(profile: IdentityProfile): IdentityProfile {
       ipv4: `192.168.1.${20 + ((Math.random() * 200) | 0)}`,
     })),
   };
+}
+
+export function stockProfile(): IdentityProfile {
+  return structuredClone(DEFAULT_PROFILE);
+}
+
+export function stockFlags(): HwFlags {
+  return { ...CLEAN_FLAGS };
 }

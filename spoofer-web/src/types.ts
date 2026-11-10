@@ -1,4 +1,5 @@
 export type SectionId = "storage" | "smbios" | "network";
+export type LineStatus = "Spoofed" | "Clean";
 
 export interface DiskIdentity {
   diskIndex: number;
@@ -40,34 +41,20 @@ export interface IdentityProfile {
   nics: NicIdentity[];
 }
 
-export interface Stats {
-  session: boolean;
-  sections: Record<SectionId, boolean>;
-  applies: number;
-  randomizes: number;
-  imports: number;
-  exports: number;
-  diskReads: number;
-  smbiosReads: number;
-  nicQueries: number;
+export interface HwFlags {
+  disk: LineStatus;
+  smbios: LineStatus;
+  nic: LineStatus;
 }
 
-export interface LogLine {
-  id: number;
-  ts: number;
-  section: SectionId | "sys";
-  level: "info" | "ok" | "warn" | "err";
-  text: string;
-}
-
-export const SECTION_TITLE: Record<SectionId, string> = {
-  storage: "Disk",
-  smbios: "Computer",
-  network: "Network",
+export const CLEAN_FLAGS: HwFlags = {
+  disk: "Clean",
+  smbios: "Clean",
+  nic: "Clean",
 };
 
-export const SECTION_SUB: Record<SectionId, string> = {
-  storage: "Serial number and product name of the main disk",
-  smbios: "Name and serial number of this computer",
-  network: "MAC address and adapter used on the network",
+export const SPOOFED_FLAGS: HwFlags = {
+  disk: "Spoofed",
+  smbios: "Spoofed",
+  nic: "Spoofed",
 };
