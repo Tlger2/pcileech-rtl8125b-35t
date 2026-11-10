@@ -64,3 +64,11 @@ The shared MMCM case met the output-pin and internal handoff timing, but missed 
 [AMD phase-shift timing edge selection](https://docs.amd.com/r/en-US/ug903-vivado-using-constraints/Multicycle-Paths-and-Clock-Phase-Shift)
 
 The input-capture-stage variant with the corrected edge pairing, 1 ns capture, and 5.5 ns output launch reached −0.273 ns setup and +0.034 ns hold after routing. Input-pin setup and hold were +1.390 ns and +3.276 ns. Output-pin setup and hold were +0.493 ns and +0.966 ns. The remaining failing paths were internal, chiefly the sampled RXF_N flag to the tristate-control registers. All four simulations passed. Aggressive post-route optimization left the same worst setup slack. Neither run generated a bitstream. The follow-up uses a 0.5 ns capture point to trade some of the positive input setup margin for additional internal handoff time.
+
+## Bus-ownership timing closure
+
+The revised logic captures the FT601 inputs at 0.5 ns after CLKOUT and runs the FIFO state machine and output registers on the 5.5 ns phase. A transmit claim state registers bus ownership a cycle before driving the bus. This removes the high-fanout tristate registers from the short receive-flag path. All four XSim tests passed, including aborting a claimed transfer, contention checks, and retrying the queued word exactly once.
+
+Vivado 2026.1 completed a clean source-to-bitstream build. Timing was +0.494 ns setup and +0.034 ns hold. The independent checkpoint audit reported 2,977 fully routed nets, zero routing errors, passing bus skew, zero unclocked registers, and zero unconstrained internal endpoints. Bitstream generation reported zero DRC errors. The local scratch image SHA-256 was 0277800DC8A1B8E5804CA01BB93202A16DA9D1E45C41219CE3018D317D9DC45E.
+
+The checkpoint also exposed a CDC-10 warning and LUTAR-1 warning on the combinational FT601 reset qualifier. This scratch image is excluded from the flash plan. The follow-up rebuild uses the MMCM LOCKED output directly for asynchronous assertion and keeps the two-stage synchronized release. The vendor PIPE clock-mux CDC entries are tracked separately.
