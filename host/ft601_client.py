@@ -355,6 +355,7 @@ def identify(client: Optional[FT601Client] = None) -> dict:
     out: dict = {
         "vid": vid,
         "pid": pid,
+        "usb_id": f"{vid:04X}:{pid:04X}",
         "usb": bool(devices),
         "devices": devices,
         "magic": f"0x{FRAME_MAGIC:08X}",
