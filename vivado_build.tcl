@@ -151,7 +151,8 @@ ip_try_set $core Bar4_Size         16
 ip_try_set $core Bar5_Enabled      false
 ip_try_set $core Expansion_Rom_Enabled false
 
-# Cap pointers: PM 0x40, MSI 0x50, PCIe 0x70, MSI-X 0xB0. DSN at 0x168.
+# Cap pointers: PM 0x40, MSI 0x50, PCIe 0x70, MSI-X 0xB0.
+# ECAP: AER 0x100 → VC 0x148 → DSN 0x168 → TPH 0x178 → LTR 0x204 → L1PM 0x20C → VSEC 0x21C
 foreach {n v} {
     PM_BASE_PTR            40
     MSI_BASE_PTR           50
@@ -160,9 +161,21 @@ foreach {n v} {
     PM_Cap_Nextptr         50
     MSI_Cap_Nextptr        70
     PCIE_Cap_Nextptr       B0
+    AER_Base_Ptr           100
+    VC_BASE_PTR            148
+    VC_Cap_Nextptr         168
     DSN_BASE_PTR           168
     DSN_Cap_Nextptr        178
+    TPH_BASE_PTR           178
+    LTR_BASE_PTR           204
+    L1_PM_SUBSTATES_BASE_PTR 20C
+    VSEC_BASE_PTR          21C
     VC_Cap_Enabled         true
+    TPH_Enabled            true
+    LTR_CTL_ON             true
+    LTR_Enabled            true
+    L1_PM_Substates        true
+    VSEC_Enabled           true
 } {
     ip_try_set $core $n $v
 }
