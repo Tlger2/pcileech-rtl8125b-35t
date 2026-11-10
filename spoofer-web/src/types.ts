@@ -1,11 +1,10 @@
-export type ModuleId = "storage" | "smbios" | "network" | "eac";
+export type SectionId = "storage" | "smbios" | "network";
 
 export interface DiskIdentity {
   diskIndex: number;
   serial: string;
   firmware: string;
   model: string;
-  enabled: boolean;
 }
 
 export interface SmbiosIdentity {
@@ -21,81 +20,54 @@ export interface SmbiosIdentity {
   boardSerial: string;
   boardAsset: string;
   chassisSerial: string;
-  cpuSerial: string;
 }
 
 export interface NicIdentity {
   ifIndex: number;
-  permanentMac: string;
+  adapterName: string;
   currentMac: string;
   adapterGuid: string;
   pnpInstance: string;
   ipv4: string;
   ipv6: string;
-  rewriteArp: boolean;
-  rewriteNd: boolean;
-  enabled: boolean;
 }
 
-export interface EacFlags {
-  stripObCallbacks: boolean;
-  stripRegCallbacks: boolean;
-  stripProcNotify: boolean;
-  stripThreadNotify: boolean;
-  stripImageNotify: boolean;
-  hideFromModuleList: boolean;
-  spoofIntegrityReads: boolean;
-  hideDeviceObject: boolean;
-}
-
-export interface SpoofConfig {
+export interface IdentityProfile {
+  name: string;
+  notes: string;
   disks: DiskIdentity[];
   smbios: SmbiosIdentity;
   nics: NicIdentity[];
-  eac: EacFlags;
 }
 
 export interface Stats {
-  loaded: boolean;
-  modules: Record<ModuleId, boolean>;
-  irpFiltered: number;
-  identifyRewrites: number;
-  inquiryRewrites: number;
-  smbiosQueries: number;
-  oidIntercepts: number;
-  macRewrites: number;
-  arpRewrites: number;
-  eacImageNotifies: number;
-  callbacksStripped: number;
-  integrityReadsSpliced: number;
-  moduleListHides: number;
+  session: boolean;
+  sections: Record<SectionId, boolean>;
+  applies: number;
+  randomizes: number;
+  imports: number;
+  exports: number;
+  diskReads: number;
+  smbiosReads: number;
+  nicQueries: number;
 }
 
 export interface LogLine {
   id: number;
   ts: number;
-  module: ModuleId | "sys";
+  section: SectionId | "sys";
   level: "info" | "ok" | "warn" | "err";
   text: string;
 }
 
-export const MODULE_MASK: Record<ModuleId, number> = {
-  storage: 1,
-  smbios: 2,
-  network: 4,
-  eac: 8,
+export const SECTION_TITLE: Record<SectionId, string> = {
+  storage: "Disk identity",
+  smbios: "SMBIOS / board",
+  network: "NIC / RTL8125B",
 };
 
-export const MODULE_TITLE: Record<ModuleId, string> = {
-  storage: "Storage stack",
-  smbios: "SMBIOS / firmware",
-  network: "NDIS / network",
-  eac: "EAC integrity",
-};
-
-export const MODULE_SUB: Record<ModuleId, string> = {
-  storage: "IRP filter · IDENTIFY · INQUIRY VPD 80/83 · GPT DiskId",
-  smbios: "NtQuerySystemInformation(76) · Type 0–4 rewrite · checksums",
-  network: "OID MAC · IfGuid · IPv4/6 · ARP/ND Ethernet rewrite",
-  eac: "Ob/Cm/Ps notify strip · MmCopyMemory splice · DKOM unlink",
+export const SECTION_SUB: Record<SectionId, string> = {
+  storage: "Serial · model · firmware for the lab disk profile",
+  smbios: "UUID · system serial · board serial · BIOS strings",
+  network: "MAC · IfGuid · IPv4 · Realtek 2.5GbE adapter identity",
 };

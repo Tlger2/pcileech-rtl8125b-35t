@@ -1,13 +1,14 @@
-import type { SpoofConfig } from "./types";
+import type { IdentityProfile } from "./types";
 
-export const DEFAULT_CONFIG: SpoofConfig = {
+export const DEFAULT_PROFILE: IdentityProfile = {
+  name: "lab-rtl8125b",
+  notes: "CaptainDMA / RTL8125B bring-up identity for local hardware lab work.",
   disks: [
     {
       diskIndex: 0,
       serial: "ZL2C4T9H",
       firmware: "SC16B",
       model: "Samsung SSD 990 PRO 2TB",
-      enabled: true,
     },
   ],
   smbios: {
@@ -23,33 +24,18 @@ export const DEFAULT_CONFIG: SpoofConfig = {
     boardSerial: "07D75-K8G4N2",
     boardAsset: "Default string",
     chassisSerial: "07D7512345678",
-    cpuSerial: "To Be Filled By O.E.M.",
   },
   nics: [
     {
       ifIndex: 12,
-      permanentMac: "02:1A:7C:44:91:B3",
-      currentMac: "02:1A:7C:44:91:B3",
+      adapterName: "Realtek RTL8125B 2.5GbE Controller",
+      currentMac: "00:E0:4C:44:91:B3",
       adapterGuid: "{8F3A1C2E-7B90-4D11-A6E2-00E04C7A3B91}",
-      pnpInstance:
-        "PCI\\VEN_10EC&DEV_8125&SUBSYS_012310EC&REV_05\\4&1A2B3C4D&0&00E0",
+      pnpInstance: "PCI\\VEN_10EC&DEV_8125&SUBSYS_012310EC&REV_05\\4&1A2B3C4D&0&00E0",
       ipv4: "192.168.1.104",
       ipv6: "fe80::7a3b:91ff:fe4c:e012",
-      rewriteArp: true,
-      rewriteNd: true,
-      enabled: true,
     },
   ],
-  eac: {
-    stripObCallbacks: true,
-    stripRegCallbacks: true,
-    stripProcNotify: true,
-    stripThreadNotify: true,
-    stripImageNotify: true,
-    hideFromModuleList: true,
-    spoofIntegrityReads: true,
-    hideDeviceObject: false,
-  },
 };
 
 export function randomHex(n: number): string {
@@ -59,28 +45,29 @@ export function randomHex(n: number): string {
   return s;
 }
 
-export function randomizeConfig(cfg: SpoofConfig): SpoofConfig {
-  const mac = `02:${randomHex(2)}:${randomHex(2)}:${randomHex(2)}:${randomHex(2)}:${randomHex(2)}`;
+export function randomizeProfile(profile: IdentityProfile): IdentityProfile {
+  const macTail = `${randomHex(2)}:${randomHex(2)}:${randomHex(2)}`;
+  const mac = `00:E0:4C:${macTail}`;
   const uuid = `${randomHex(8)}-${randomHex(4)}-4${randomHex(3)}-A${randomHex(3)}-${randomHex(12)}`;
   return {
-    ...cfg,
-    disks: cfg.disks.map((d) => ({
+    ...profile,
+    disks: profile.disks.map((d) => ({
       ...d,
       serial: randomHex(8),
       firmware: `SC${randomHex(2)}B`,
     })),
     smbios: {
-      ...cfg.smbios,
+      ...profile.smbios,
       sysSerial: `07D75${randomHex(7)}`,
       sysUuid: uuid,
       boardSerial: `07D75-${randomHex(6)}`,
       chassisSerial: `07D75${randomHex(7)}`,
     },
-    nics: cfg.nics.map((n) => ({
+    nics: profile.nics.map((n) => ({
       ...n,
-      permanentMac: mac,
       currentMac: mac,
       adapterGuid: `{${uuid}}`,
+      ipv4: `192.168.1.${20 + ((Math.random() * 200) | 0)}`,
     })),
   };
 }

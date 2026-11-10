@@ -10,13 +10,12 @@
   --red: #e25555;
   --amber: #d7a23a;
   --blue: #4aa3d9;
-  --pink: #d46bb0;
   font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; height: 100%; background: var(--bg); color: var(--text); }
-button, input { font: inherit; color: inherit; }
+button, input, textarea { font: inherit; color: inherit; }
 button { cursor: pointer; }
 
 .app {
@@ -43,9 +42,10 @@ button { cursor: pointer; }
 .brand p { margin: 2px 0 0; color: var(--muted); font-size: 11px; font-family: "IBM Plex Mono", ui-monospace, monospace; }
 .led {
   width: 10px; height: 10px; border-radius: 50%;
-  background: #333; box-shadow: inset 0 0 0 1px #000;
+  background: #333; box-shadow: inset 0 0 0 1px #000; flex-shrink: 0;
 }
 .led.on { background: var(--teal); box-shadow: 0 0 8px var(--teal); }
+.led.on.dim { box-shadow: none; opacity: 0.7; }
 
 .top-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .btn {
@@ -71,10 +71,11 @@ button { cursor: pointer; }
   color: var(--muted);
 }
 .banner.err { background: #2a1214; border-color: var(--red); color: #f0c4c4; }
+.banner.warn { background: #2a2210; border-color: var(--amber); color: #ead7a4; }
 
 .stats-row {
   display: grid;
-  grid-template-columns: repeat(11, 1fr);
+  grid-template-columns: repeat(8, 1fr);
   gap: 6px;
 }
 .stat {
@@ -108,10 +109,18 @@ button { cursor: pointer; }
   font-size: 12px;
 }
 .panel-h > div { display: flex; align-items: center; gap: 8px; }
+.tag {
+  font-size: 10px;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  color: var(--teal);
+  border: 1px solid var(--teal-dim);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
 .sub { margin: 8px 10px 0; color: var(--muted); font-size: 11px; line-height: 1.35; }
 .fields { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
 .field { display: flex; flex-direction: column; gap: 3px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.field input {
+.field input, .field textarea {
   background: #0a1016;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -120,11 +129,10 @@ button { cursor: pointer; }
   text-transform: none;
   letter-spacing: 0;
   font-family: "IBM Plex Mono", ui-monospace, monospace;
+  resize: vertical;
 }
-.field input:focus { outline: 1px solid var(--teal); }
-.chk { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text); }
+.field input:focus, .field textarea:focus { outline: 1px solid var(--teal); }
 .module.live { border-color: var(--teal-dim); }
-.module.eac.live { border-color: #7a2a2a; }
 
 .bottom {
   display: grid;
@@ -135,7 +143,7 @@ button { cursor: pointer; }
 }
 .log-panel, .src-panel { display: flex; flex-direction: column; min-height: 0; }
 .filters { display: flex; gap: 4px; flex-wrap: wrap; }
-.filters button, .file-tabs button {
+.filters button {
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 4px;
@@ -144,7 +152,7 @@ button { cursor: pointer; }
   text-transform: uppercase;
   color: var(--muted);
 }
-.filters button.on, .file-tabs button.on { border-color: var(--teal); color: var(--teal); }
+.filters button.on { border-color: var(--teal); color: var(--teal); }
 .log {
   flex: 1;
   overflow: auto;
@@ -159,20 +167,12 @@ button { cursor: pointer; }
 .line .m.storage { color: var(--teal); }
 .line .m.smbios { color: var(--blue); }
 .line .m.network { color: var(--amber); }
-.line .m.eac { color: var(--red); }
 .line .m.sys { color: var(--muted); }
 .line.err .x { color: #f0a0a0; }
 .line.warn .x { color: #e6c98a; }
 .line.ok .x { color: #b7e6d6; }
 .empty { color: var(--muted); padding: 20px; text-align: center; }
 
-.file-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--line);
-}
 .src {
   margin: 0;
   flex: 1;
