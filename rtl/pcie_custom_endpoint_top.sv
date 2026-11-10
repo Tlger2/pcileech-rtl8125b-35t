@@ -52,6 +52,7 @@ module pcie_custom_endpoint_top (
 
     // ---- FT601 USB3 (ft601_clk domain) ----
     input  logic        ft601_clk,
+    input  logic        ft601_sample_clk,
     input  logic        ft601_rst_n,
     input  logic        ft601_rxf_n,
     output logic        ft601_oe_n,
@@ -86,6 +87,7 @@ logic  [3:0] fifo_wr_be;
 
 ft601_sfifo u_ft601_sfifo (
     .clk          (ft601_clk),
+    .sample_clk   (ft601_sample_clk),
     .rst_n        (ft601_rst_n),
     .ft601_rxf_n  (ft601_rxf_n),
     .ft601_txe_n  (ft601_txe_n),
