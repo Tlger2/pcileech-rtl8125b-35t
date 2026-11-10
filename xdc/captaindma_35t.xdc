@@ -105,15 +105,10 @@ set_property CONFIG_VOLTAGE  3.3  [current_design]
 #------------------------------------------------------------------------------
 create_clock -name board_clk   -period 10.000 [get_ports board_clk]
 create_clock -name ft601_clk   -period 10.000 [get_ports ft601_clk]
-# Create pcie_refclk on the IBUFDS_GTE2 O pin, NOT on the top-level port.
-# Vivado cannot propagate a port-level create_clock through IBUFDS_GTE2 into
-# the GT transceiver and downstream MMCM.  Anchoring on the O pin lets
-# -include_generated_clocks traverse the full GT→MMCM→user_clk_out chain.
-create_clock -name pcie_refclk -period 10.000 [get_pins u_refclk_ibuf/O]
+# Define the board reference clock at its physical entry point.
+create_clock -name pcie_refclk -period 10.000 [get_ports sys_clk_p]
 
 # All three oscillator domains are independent — declare async across the board.
-# -include_generated_clocks on pcie_refclk now captures pcie_user_clk and pipe_clk
-# because create_clock is on the IBUFDS_GTE2 O pin.
 set_clock_groups -asynchronous \
     -group [get_clocks -include_generated_clocks board_clk] \
     -group [get_clocks -include_generated_clocks ft601_clk] \
@@ -144,10 +139,6 @@ set_false_path -hold \
 # so suppressing hold on its input stage is architecturally correct.
 set_false_path -hold \
     -to [get_cells -hierarchical -filter {NAME =~ *dest_graysync_ff_reg* && IS_SEQUENTIAL == 1}]
-
-# Reset synchronizer within xpm_fifo_rst (xpm_cdc_sync_rst) — same rationale.
-set_false_path -hold \
-    -to [get_cells -hierarchical -filter {NAME =~ *arststages_ff_reg*     && IS_SEQUENTIAL == 1}]
 
 #------------------------------------------------------------------------------
 # FT601 input/output delays — FTDI DS_FT600Q-FT601Q v1.06 table 4.2
