@@ -39,8 +39,6 @@ export type EntityCategory =
   | "collectible"
   | "monument";
 
-export type ChamsMode = "default" | "full-pink" | "not-see";
-
 export interface Vec3 {
   x: number;
   y: number;
@@ -93,18 +91,8 @@ export interface WorldSnapshot {
   liveLocal: boolean;
 }
 
-export interface HackFlags {
-  visCheckChams: boolean;
-  adminEsp: boolean;
-  interactiveCamera: boolean;
-  brightNight: boolean;
-  brightCaves: boolean;
-}
-
 export interface AppSettings {
   loot: Record<LootFilterKey, boolean>;
-  chams: ChamsMode;
-  hacks: HackFlags;
   showMenu: boolean;
   showLoot: boolean;
   showEsp: boolean;

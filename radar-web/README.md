@@ -2,7 +2,7 @@
 
 > “in the end you are never truly banned” — Hellon Wong
 
-Read-only web radar: satellite island, loot filter, ESP widget, DMA panel, chams, visual ESP. Write-memory cheats are not included. DMA is snapshot ingest / FT601 identify-read only.
+Read-only web radar: Facepunch-style satellite island (teal ocean, canopy, dirt roads, ice-cap snow — not cartoon cloud masses), loot filter, ESP widget, DMA panel. Write-memory cheats are not included. DMA is snapshot ingest / FT601 identify-read only. When the bridge serves `GET /map`, that raster is the basemap; otherwise the SIM paints a procedural G-map.
 
 ## Run (SIM)
 

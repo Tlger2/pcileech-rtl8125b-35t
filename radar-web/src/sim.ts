@@ -1,7 +1,6 @@
 import {
   generateTerrain,
   isLandAt,
-  lineOfSight,
   randomLandPoint,
   RUST_MONUMENTS,
   sampleHeight,
@@ -105,7 +104,7 @@ export class WorldSim {
     this.seed = seed;
     this.size = size;
     this.rand = mulberry32(seed);
-    this.terrain = generateTerrain(size, seed, 512);
+    this.terrain = generateTerrain(size, seed, 1024);
     this.local = this.spawnLocal();
     this.seedWorld();
   }
@@ -306,7 +305,7 @@ export class WorldSim {
     const sizeChanged = newSize !== this.size;
     if (sizeChanged) {
       this.size = newSize;
-      this.terrain = generateTerrain(newSize, this.seed, 512);
+      this.terrain = generateTerrain(newSize, this.seed, 1024);
     }
     const nextProvider = raw.provider;
     this.provider =
@@ -366,10 +365,9 @@ export class WorldSim {
     return { sizeChanged, spawnedLocal };
   }
 
-  tick(dt: number, settings: AppSettings): WorldSnapshot {
+  tick(dt: number): WorldSnapshot {
     const t0 = performance.now();
     this.time += dt;
-    const hacks = settings.hacks;
 
     this.local.airborne = Math.sin(this.time * 0.7) > 0.92;
     const speed = 16;
@@ -409,19 +407,6 @@ export class WorldSim {
       }
     }
 
-    const visOn = hacks.visCheckChams;
-    for (const a of this.actors) {
-      a.visible = visOn
-        ? lineOfSight(
-            this.terrain,
-            this.local.position.x,
-            this.local.position.z,
-            a.position.x,
-            a.position.z,
-          )
-        : true;
-    }
-
     const entities = [...this.statics, ...this.actors];
     const frameMs = performance.now() - t0;
     return {
@@ -457,14 +442,6 @@ export function defaultSettings(): AppSettings {
   };
   return {
     loot,
-    chams: "full-pink",
-    hacks: {
-      visCheckChams: true,
-      adminEsp: true,
-      interactiveCamera: true,
-      brightNight: false,
-      brightCaves: true,
-    },
     showMenu: true,
     showLoot: true,
     showEsp: true,
@@ -479,18 +456,16 @@ export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem("never-banned-settings");
     if (!raw) return base;
-    const parsed = JSON.parse(raw) as Partial<AppSettings> & { hacks?: Partial<AppSettings["hacks"]> };
+    const parsed = JSON.parse(raw) as Partial<AppSettings> & {
+      chams?: unknown;
+      hacks?: unknown;
+    };
+    delete parsed.chams;
+    delete parsed.hacks;
     return {
       ...base,
       ...parsed,
       loot: { ...base.loot, ...parsed.loot },
-      hacks: {
-        visCheckChams: parsed.hacks?.visCheckChams ?? base.hacks.visCheckChams,
-        adminEsp: parsed.hacks?.adminEsp ?? base.hacks.adminEsp,
-        interactiveCamera: parsed.hacks?.interactiveCamera ?? base.hacks.interactiveCamera,
-        brightNight: parsed.hacks?.brightNight ?? base.hacks.brightNight,
-        brightCaves: parsed.hacks?.brightCaves ?? base.hacks.brightCaves,
-      },
     };
   } catch {
     return base;

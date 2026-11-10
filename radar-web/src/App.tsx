@@ -6,7 +6,6 @@ import { joinFormatView, stageSize } from "./rustMap";
 import { loadSettings, saveSettings, WorldSim } from "./sim";
 import type {
   AppSettings,
-  ChamsMode,
   Entity,
   LootFilterKey,
   WorldSnapshot,
@@ -35,10 +34,8 @@ function formatJoin(world: WorldSnapshot) {
 export function App() {
   const simRef = useRef(new WorldSim(1337, 4000));
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
-  const settingsRef = useRef(settings);
-  settingsRef.current = settings;
   const [snap, setSnap] = useState<WorldSnapshot>(() =>
-    simRef.current.tick(0, loadSettings()),
+    simRef.current.tick(0),
   );
   const [fps, setFps] = useState(60);
   const [help, setHelp] = useState<string | null>(null);
@@ -57,17 +54,28 @@ export function App() {
     hadLiveLocal: false,
     worldSize: simRef.current.size,
   });
+  const followRef = useRef(true);
 
   const applyJoinFormat = useCallback((world: WorldSnapshot) => {
     const next = formatJoin(world);
-    if (next) setView(next);
+    if (next) {
+      followRef.current = true;
+      setView(next);
+    }
+  }, []);
+
+  const onView = useCallback((next: { x: number; z: number; scale: number }) => {
+    setView((prev) => {
+      if (next.x !== prev.x || next.z !== prev.z) followRef.current = false;
+      return next;
+    });
   }, []);
 
   useEffect(() => saveSettings(settings), [settings]);
   useEffect(() => saveDmaSourceUrl(dmaUrl), [dmaUrl]);
 
   useEffect(() => {
-    const world = simRef.current.tick(0, settingsRef.current);
+    const world = simRef.current.tick(0);
     applyJoinFormat(world);
     joinRef.current.didSimStart = true;
     joinRef.current.worldSize = world.worldSize;
@@ -81,7 +89,7 @@ export function App() {
       const now = performance.now();
       const dt = Math.min(0.08, (now - last) / 1000);
       last = now;
-      const world = simRef.current.tick(dt, settingsRef.current);
+      const world = simRef.current.tick(dt);
       frames += 1;
       if (now - lastHud > 50) {
         const hz = Math.max(1, Math.round((frames * 1000) / (now - lastHud)));
@@ -89,8 +97,7 @@ export function App() {
         lastHud = now;
         setFps(hz);
         setSnap({ ...world, fps: hz });
-        const s = settingsRef.current;
-        if (!s.hacks.interactiveCamera && world.localPlayer) {
+        if (followRef.current && world.localPlayer) {
           setView((v) => ({
             ...v,
             x: world.localPlayer!.position.x,
@@ -111,7 +118,7 @@ export function App() {
         const raw = await pullSnapshot(dmaUrlRef.current);
         if (!raw) return;
         const result = simRef.current.ingestSnapshot(raw);
-        const world = simRef.current.tick(0, settingsRef.current);
+        const world = simRef.current.tick(0);
         if (result.sizeChanged) setMapRev((n) => n + 1);
         if (result.spawnedLocal || result.sizeChanged) applyJoinFormat(world);
         joinRef.current.hadLiveLocal = world.liveLocal;
@@ -136,6 +143,7 @@ export function App() {
       if (e.key === "F4") setSettings((s) => ({ ...s, classicRadar: !s.classicRadar }));
       if (e.key === "f" || e.key === "F") {
         const p = simRef.current.local.position;
+        followRef.current = true;
         setView((v) => ({ ...v, x: p.x, z: p.z }));
       }
     };
@@ -154,7 +162,7 @@ export function App() {
       simRef.current.liveLocal = true;
       joinRef.current.hadLiveLocal = false;
       setDmaMsg("SIM world");
-      publishWorld(simRef.current.tick(0, settingsRef.current));
+      publishWorld(simRef.current.tick(0));
       return;
     }
     const st = await probeDma(dmaUrlRef.current);
@@ -162,7 +170,7 @@ export function App() {
       simRef.current.dmaConnected = false;
       simRef.current.provider = "sim";
       setDmaMsg(st.detail);
-      publishWorld(simRef.current.tick(0, settingsRef.current));
+      publishWorld(simRef.current.tick(0));
       return;
     }
     const raw = await pullSnapshot(dmaUrlRef.current);
@@ -170,13 +178,13 @@ export function App() {
       simRef.current.dmaConnected = false;
       simRef.current.provider = "sim";
       setDmaMsg(`SIM — empty snapshot at ${st.detail}`);
-      publishWorld(simRef.current.tick(0, settingsRef.current));
+      publishWorld(simRef.current.tick(0));
       return;
     }
     const result = simRef.current.ingestSnapshot(raw);
     simRef.current.dmaConnected = true;
     simRef.current.provider = st.provider;
-    const world = simRef.current.tick(0, settingsRef.current);
+    const world = simRef.current.tick(0);
     if (result.sizeChanged) setMapRev((n) => n + 1);
     if (world.liveLocal || result.sizeChanged) applyJoinFormat(world);
     joinRef.current.hadLiveLocal = world.liveLocal;
@@ -190,7 +198,7 @@ export function App() {
       const raw = await pullSnapshot(dmaUrlRef.current);
       if (raw) {
         const result = simRef.current.ingestSnapshot(raw);
-        const world = simRef.current.tick(0, settingsRef.current);
+        const world = simRef.current.tick(0);
         if (result.sizeChanged) setMapRev((n) => n + 1);
         applyJoinFormat(world);
         joinRef.current.hadLiveLocal = world.liveLocal;
@@ -200,7 +208,7 @@ export function App() {
     } else {
       simRef.current.reloadMap(simRef.current.seed);
       setMapRev((n) => n + 1);
-      const world = simRef.current.tick(0, settingsRef.current);
+      const world = simRef.current.tick(0);
       applyJoinFormat(world);
       publishWorld(world);
     }
@@ -269,7 +277,7 @@ export function App() {
           settings={settings}
           view={view}
           dmaSourceUrl={dmaUrl}
-          onView={setView}
+          onView={onView}
           onHover={onHover}
           onClickEntity={onClickEntity}
         />
@@ -381,55 +389,11 @@ export function App() {
                   onClick={() => {
                     simRef.current.reloadMap(simRef.current.seed);
                     setMapRev((n) => n + 1);
-                    applyJoinFormat(simRef.current.tick(0, settingsRef.current));
+                    applyJoinFormat(simRef.current.tick(0));
                   }}
                 >
                   Reload Map
                 </button>
-              </div>
-
-              <div className="block">
-                <div className="lbl">
-                  Chams <button className="readme" onClick={() => setHelp(HELP.chams)}>(Read me)</button>
-                </div>
-                <select
-                  className="select"
-                  value={settings.chams}
-                  onChange={(e) => patch((s) => ({ ...s, chams: e.target.value as ChamsMode }))}
-                >
-                  <option value="default">Default</option>
-                  <option value="full-pink">Full Pink</option>
-                  <option value="not-see">Not see</option>
-                </select>
-              </div>
-
-              <div className="block hack-list">
-                <div className="lbl">Hack Functions ** Risky **</div>
-                {(
-                  [
-                    ["visCheckChams", "Enable Visibility Check Chams", "vis"],
-                    ["adminEsp", "Admin Esp", "adminEsp"],
-                    ["interactiveCamera", "Interactive camera", "camera"],
-                    ["brightNight", "Bright Night", "night"],
-                    ["brightCaves", "Bright Caves", "caves"],
-                  ] as const
-                ).map(([key, label, helpKey]) => (
-                  <label className="check" key={key}>
-                    <span>
-                      <input
-                        type="checkbox"
-                        checked={settings.hacks[key]}
-                        onChange={(e) =>
-                          patch((s) => ({ ...s, hacks: { ...s.hacks, [key]: e.target.checked } }))
-                        }
-                      />
-                      {label}
-                    </span>
-                    <button className="readme" onClick={() => setHelp(HELP[helpKey])} type="button">
-                      (Read me)
-                    </button>
-                  </label>
-                ))}
               </div>
             </section>
           )}

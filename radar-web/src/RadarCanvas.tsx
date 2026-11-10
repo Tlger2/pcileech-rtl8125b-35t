@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { paintTerrainCanvas, type Terrain } from "./mapgen";
+import { paintTerrainCanvas, SATELLITE_OCEAN_FILL, type Terrain } from "./mapgen";
 import {
   basemapUrls,
   isAllowedBasemapSrc,
@@ -21,10 +21,9 @@ interface Props {
   onClickEntity: (e: Entity) => void;
 }
 
-function colorFor(e: Entity, chams: AppSettings["chams"]): string {
+function colorFor(e: Entity): string {
   if (e.category === "monument") return "#d8d4c8";
   if (e.category.startsWith("player")) {
-    if (chams === "full-pink") return "#ff4fa3";
     if (e.admin) return "#e7c15a";
     if (e.npc) return "#6adf6a";
     if (e.sleeping) return "#c9a0ff";
@@ -134,10 +133,10 @@ export function RadarCanvas({
     let baseImg: HTMLImageElement | null = null;
     let baseKey = "";
 
-    const ensureTerrain = (s: AppSettings) => {
-      const key = `${terrain.seed}:${terrain.size}:${terrain.resolution}:${s.hacks.brightNight}:${s.hacks.brightCaves}`;
+    const ensureTerrain = () => {
+      const key = `${terrain.seed}:${terrain.size}:${terrain.resolution}`;
       if (terrainBmp && terrainKey === key) return terrainBmp;
-      terrainBmp = paintTerrainCanvas(terrain, s.hacks.brightNight, s.hacks.brightCaves);
+      terrainBmp = paintTerrainCanvas(terrain, false, false);
       terrainKey = key;
       return terrainBmp;
     };
@@ -189,14 +188,14 @@ export function RadarCanvas({
       const snap = snapRef.current;
       const s = setRef.current;
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = s.hacks.brightNight ? "#1a5a72" : "#083044";
+      ctx.fillStyle = SATELLITE_OCEAN_FILL;
       ctx.fillRect(0, 0, w, h);
 
       const origin = worldToScreen(0, snap.worldSize, v, w, h);
       const corner = worldToScreen(snap.worldSize, 0, v, w, h);
       const dw = corner.sx - origin.sx;
       const dh = corner.sy - origin.sy;
-      const bmp = ensureTerrain(s);
+      const bmp = ensureTerrain();
       const overlay = ensureBasemap(snap);
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
@@ -225,11 +224,7 @@ export function RadarCanvas({
 
       const ents = snap.entities.filter((e) => {
         if (e.category === "monument") return true;
-        if (e.category.startsWith("player")) {
-          if (s.chams === "not-see" && !e.admin) return false;
-          if (e.admin && !s.hacks.adminEsp && e.category === "player-admin") return true;
-          return true;
-        }
+        if (e.category.startsWith("player")) return true;
         if (zoomedOut) return false;
         return passesFilter(e, s);
       });
@@ -237,7 +232,7 @@ export function RadarCanvas({
       for (const e of ents) {
         const { sx, sy } = worldToScreen(e.position.x, e.position.z, v, w, h);
         if (sx < -40 || sy < -40 || sx > w + 40 || sy > h + 40) continue;
-        const col = colorFor(e, s.chams);
+        const col = colorFor(e);
         const hidden = e.visible === false;
         ctx.globalAlpha = hidden ? 0.28 : 1;
         ctx.fillStyle = col;
@@ -307,7 +302,7 @@ export function RadarCanvas({
         z: viewRef.current.z,
         px: ev.clientX,
         py: ev.clientY,
-        pan: setRef.current.hacks.interactiveCamera,
+        pan: true,
       };
     };
     const move = (ev: PointerEvent) => {
@@ -420,7 +415,6 @@ export function EspCanvas({
         const sy = cy - rz * scale;
         if (sx < 2 || sy < 2 || sx > w - 2 || sy > h - 2) continue;
         ctx.fillStyle = e.admin ? "#e7c15a" : e.npc ? "#6adf6a" : e.sleeping ? "#c9a0ff" : "#e05252";
-        if (settings.chams === "full-pink" && e.category.startsWith("player")) ctx.fillStyle = "#ff4fa3";
         ctx.beginPath();
         ctx.arc(sx, sy, 2.4, 0, Math.PI * 2);
         ctx.fill();
