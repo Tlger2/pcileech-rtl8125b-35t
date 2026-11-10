@@ -35,3 +35,10 @@ Confirm SPI NOR part and geometry, select a compatible method, and review the ex
 
 - [CaptainDMA hardware notes](https://github.com/ufrisk/pcileech-fpga/blob/master/CaptainDMA/readme.md)
 - [OpenOCD update-port workflow](https://docs.lambdaconcept.com/screamer/programming.html)
+
+## Verification of this branch
+
+- The clean Vivado build of the clock and reset constraint corrections synthesized and routed. The timing gate withheld the bitstream at +0.471 ns setup and -2.318 ns hold. The worst hold paths run from the FT601 tristate registers to byte-enable and data outputs. The passing margins from the bench checkpoint are separate evidence.
+- All four XSim testbenches passed against the GitHub RTL when run in the previously working scratch directory. The first attempt hit a Windows child-process launch error.
+
+- A separate fabric-placement experiment with the same FT601 constraints routed at -5.313 ns setup and +0.034 ns hold. It traded the hold failure for a setup failure, so those placement attributes were excluded from this branch. Keep the flash on hold until the FT601 output timing closes against an interface model supported by the actual capture edges and board delays.
