@@ -38,7 +38,7 @@ export const BIOME_MONUMENT = 7;
 export const BIOME_DESERT = 8;
 
 /** Facepunch-style teal ocean behind / around the island. */
-export const SATELLITE_OCEAN_FILL = "#2c7488";
+export const SATELLITE_OCEAN_FILL = "#2a7a8c";
 
 export const RUST_MONUMENTS: MonumentSpec[] = [
   { name: "Airfield", nx: 0.58, nz: 0.44, radius: 0.038, kind: "airfield" },
@@ -89,7 +89,7 @@ function landField(nx: number, ny: number): number {
   return field;
 }
 
-export function generateTerrain(size: number, seed: number, resolution = 1024): Terrain {
+export function generateTerrain(size: number, seed: number, resolution = 768): Terrain {
   const n = resolution * resolution;
   const height = new Float32Array(n);
   const land = new Uint8Array(n);
@@ -112,14 +112,14 @@ export function generateTerrain(size: number, seed: number, resolution = 1024): 
         biome[i] = BIOME_OCEAN;
       } else if (field < 0.392) {
         biome[i] = BIOME_SAND;
-      } else if (height[i] > 0.84 && grove > 0.58) {
+      } else if (height[i] > 0.8 && grove > 0.5) {
         // Ice caps on peaks only — never a northern fog blanket.
         biome[i] = BIOME_SNOW;
       } else if (height[i] > 0.72 && arid > 0.5) {
         biome[i] = BIOME_ROCK;
       } else if (arid > 0.68 && ny < 0.34 && field > 0.45) {
         biome[i] = BIOME_DESERT;
-      } else if (grove > 0.4 && field > 0.42) {
+      } else if (grove > 0.34 && field > 0.41) {
         biome[i] = BIOME_FOREST;
       } else {
         biome[i] = BIOME_GRASS;
@@ -275,10 +275,10 @@ export function lineOfSight(
   return true;
 }
 
-const DEEP = [36, 96, 114];
-const OCEAN = [48, 118, 132];
-const SHALLOW = [82, 148, 150];
-const REEF = [118, 168, 154];
+const DEEP = [30, 94, 120];
+const OCEAN = [42, 118, 140];
+const SHALLOW = [74, 148, 158];
+const REEF = [112, 168, 160];
 const SAND = [214, 196, 148];
 const SAND2 = [196, 176, 128];
 const GRASS = [126, 148, 72];
@@ -299,22 +299,6 @@ const DESERT = [186, 158, 98];
 
 function mix(a: number[], b: number[], t: number): number[] {
   return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
-}
-
-function landNeighbor(land: Uint8Array, res: number, x: number, y: number): boolean {
-  if (x < 0 || y < 0 || x >= res || y >= res) return false;
-  return land[y * res + x] === 1;
-}
-
-function coastProximity(land: Uint8Array, res: number, x: number, y: number): number {
-  let near = 0;
-  for (let oy = -3; oy <= 3; oy++) {
-    for (let ox = -3; ox <= 3; ox++) {
-      if (ox === 0 && oy === 0) continue;
-      if (landNeighbor(land, res, x + ox, y + oy)) near += 1;
-    }
-  }
-  return near / 48;
 }
 
 export function biomeRgb(
@@ -444,7 +428,7 @@ export function paintTerrainCanvas(
   if (!ctx) return canvas;
   const img = ctx.createImageData(res, res);
   const data = img.data;
-  const { height, land, biome } = terrain;
+  const { height, biome } = terrain;
 
   for (let py = 0; py < res; py++) {
     const tz = res - 1 - py;
@@ -458,8 +442,7 @@ export function paintTerrainCanvas(
       const grain = (hash2(px, tz) - 0.5) * 10;
       let rgb: [number, number, number];
       if (b === BIOME_OCEAN) {
-        const near = coastProximity(land, res, px, tz);
-        const shallow = clamp(near * 1.35 + h * 0.4, 0, 1);
+        const shallow = clamp(h * 1.55, 0, 1);
         const water = mix(DEEP, mix(OCEAN, mix(SHALLOW, REEF, shallow), shallow), shallow);
         const wave = (hash2(px + 19, tz * 3) - 0.5) * 6;
         rgb = [

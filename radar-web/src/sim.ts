@@ -104,13 +104,13 @@ export class WorldSim {
     this.seed = seed;
     this.size = size;
     this.rand = mulberry32(seed);
-    this.terrain = generateTerrain(size, seed, 1024);
+    this.terrain = generateTerrain(size, seed, 768);
     this.local = this.spawnLocal();
     this.seedWorld();
   }
 
   private spawnLocal(): LocalPlayer {
-    const preferred = { x: this.size * 0.47, z: this.size * 0.44 };
+    const preferred = { x: this.size * 0.26, z: this.size * 0.5 };
     const p = isLandAt(this.terrain, preferred.x, preferred.z)
       ? preferred
       : randomLandPoint(this.terrain, this.rand, 200) ?? preferred;
@@ -154,7 +154,7 @@ export class WorldSim {
   }
 
   private seedWorld(): void {
-    const cluster = { x: this.size * 0.47, z: this.size * 0.44 };
+    const cluster = { x: this.size * 0.26, z: this.size * 0.5 };
     const scatter = (spread: number) => {
       for (let k = 0; k < 12; k++) {
         const p = this.landOrRetry();
@@ -305,7 +305,7 @@ export class WorldSim {
     const sizeChanged = newSize !== this.size;
     if (sizeChanged) {
       this.size = newSize;
-      this.terrain = generateTerrain(newSize, this.seed, 1024);
+      this.terrain = generateTerrain(newSize, this.seed, 768);
     }
     const nextProvider = raw.provider;
     this.provider =

@@ -88,7 +88,7 @@ button:focus-visible, input:focus-visible {
 .titlebar .icons button:hover { background: #3a4650; }
 .titlebar .icons button.active { background: #1e6e68; color: #fff; }
 
-.stage { position: relative; overflow: hidden; background: #2c7488; }
+.stage { position: relative; overflow: hidden; background: #2a7a8c; }
 .stage > canvas {
   position: absolute;
   inset: 0;
