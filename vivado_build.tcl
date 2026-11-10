@@ -83,17 +83,20 @@ proc ip_has_cfg {ip name} {
     return [expr {[lsearch -exact [list_property $ip] CONFIG.$name] >= 0}]
 }
 proc ip_try_set {ip name value} {
-    if {[ip_has_cfg $ip $name]} {
-        set_property CONFIG.$name $value $ip
-        puts "INFO: CONFIG.$name = $value"
-        return 1
+    if {![ip_has_cfg $ip $name]} {
+        puts "WARN: CONFIG.$name not in this pcie_7x; skipped"
+        return 0
     }
-    puts "WARN: CONFIG.$name not in this pcie_7x; skipped"
-    return 0
+    if {[catch {set_property CONFIG.$name $value $ip} err]} {
+        set allowed {}
+        catch {set allowed [list_property_value CONFIG.$name $ip]}
+        puts "WARN: CONFIG.$name = $value failed ($err); allowed={$allowed}"
+        return 0
+    }
+    puts "INFO: CONFIG.$name = $value"
+    return 1
 }
-
-set ip_exists [get_ips -quiet pcie_7x_0]
-if {[llength $ip_exists] == 0} {
+proc pcie7x_create {} {
     set avail [get_ipdefs "xilinx.com:ip:pcie_7x:*" -quiet]
     if {[llength $avail] == 0} {
         error "pcie_7x IP not found in catalog — check Vivado installation"
@@ -102,6 +105,20 @@ if {[llength $ip_exists] == 0} {
     puts "INFO: using pcie_7x version $ip_ver"
     create_ip -name pcie_7x -vendor xilinx.com -library ip \
               -version $ip_ver -module_name pcie_7x_0
+}
+proc pcie7x_recreate {} {
+    puts "INFO: recreating pcie_7x_0 so BAR0 Type enum can include I/O"
+    set xci [get_files -quiet pcie_7x_0.xci]
+    catch {export_ip_user_files -of_objects [get_ips pcie_7x_0] -no_script -reset -force}
+    if {[llength $xci]} {
+        remove_files -fileset sources_1 $xci
+    }
+    catch {file delete -force [file normalize "[file dirname [info script]]/vivado_project/rtl8125b_dma.srcs/sources_1/ip/pcie_7x_0"]}
+    pcie7x_create
+}
+
+if {[llength [get_ips -quiet pcie_7x_0]] == 0} {
+    pcie7x_create
 } else {
     puts "INFO: pcie_7x_0 IP already exists; re-applying donor CONFIG"
 }
@@ -128,11 +145,59 @@ set_property -dict [list \
 ] $core
 # Wrapper wires cfg_ext_* — do not turn EXT_PCI_CFG_Space off.
 
-# BAR0: I/O 256 B. BAR2: 64-bit npref 64 KB MAC. BAR4: 64-bit npref 16 KB MSI-X.
-ip_try_set $core Bar0_Enabled      true
-ip_try_set $core Bar0_Type         IO
-ip_try_set $core Bar0_64bit        false
-ip_try_set $core Bar0_Prefetchable false
+# BAR0: donor I/O 256 B. Vivado 2026.1 pcie_7x may only allow Memory on an
+# already-customized core (Bar0_Type IO aborts the whole script without catch).
+# Try IO spellings first; if the enum is Memory-only, recreate the IP once.
+proc pcie7x_try_bar0_io {core} {
+    ip_try_set $core Bar0_Enabled      true
+    ip_try_set $core Bar0_64bit        false
+    ip_try_set $core Bar0_Prefetchable false
+    set allowed {}
+    catch {set allowed [list_property_value CONFIG.Bar0_Type $core]}
+    puts "INFO: Bar0_Type allowed={$allowed}"
+    foreach cand {IO I/O Io io} {
+        if {[ip_try_set $core Bar0_Type $cand]} {
+            ip_try_set $core Bar0_Scale Bytes
+            ip_try_set $core Bar0_Size  256
+            return 1
+        }
+    }
+    return 0
+}
+
+set core [get_ips pcie_7x_0]
+if {![pcie7x_try_bar0_io $core]} {
+    pcie7x_recreate
+    set core [get_ips pcie_7x_0]
+    set_property -dict [list \
+        CONFIG.Vendor_ID                {10EC} \
+        CONFIG.Device_ID                {8125} \
+        CONFIG.Revision_ID              {05} \
+        CONFIG.Subsystem_Vendor_ID      {10EC} \
+        CONFIG.Subsystem_ID             {0123} \
+        CONFIG.Base_Class_Menu          {Network_controller} \
+        CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
+        CONFIG.Link_Speed               {5.0_GT/s} \
+        CONFIG.Maximum_Link_Width       {X1} \
+        CONFIG.Max_Payload_Size         {256_bytes} \
+        CONFIG.Extended_Tag_Field       {false} \
+        CONFIG.AER_Enabled              {true} \
+        CONFIG.DSN_Enabled              {true} \
+        CONFIG.MSIx_Enabled             {true} \
+        CONFIG.MSI_Enabled              {true} \
+        CONFIG.PCIe_Blk_Locn            {X0Y0} \
+        CONFIG.EXT_PCI_CFG_Space        {true} \
+    ] $core
+    if {![pcie7x_try_bar0_io $core]} {
+        puts "WARN: pcie_7x has no I/O BAR0; using Memory 256 B (lspci BAR0 type will not match donor I/O)"
+        ip_try_set $core Bar0_Enabled      true
+        ip_try_set $core Bar0_Type         Memory
+        ip_try_set $core Bar0_64bit        false
+        ip_try_set $core Bar0_Prefetchable false
+        ip_try_set $core Bar0_Scale        Bytes
+        ip_try_set $core Bar0_Size         256
+    }
+}
 ip_try_set $core Bar0_Scale        Bytes
 ip_try_set $core Bar0_Size         256
 ip_try_set $core Bar1_Enabled      false

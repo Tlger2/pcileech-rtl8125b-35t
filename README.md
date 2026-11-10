@@ -102,6 +102,8 @@ vivado -mode batch -source vivado_flash.tcl
 
 `wait_on_run` has no 20-second cap (that aborted synth). Do not power-cycle L1 after SRAM program.
 
+Vivado 2026.1 on Windows lives under `C:\AMDDesignTools\2026.1\Vivado\settings64.bat` (not `C:\Xilinx`). `Bar0_Type IO` can abort an already-customized `pcie_7x_0`; `vivado_build.tcl` catches that, recreates the IP if needed, and falls back to Memory 256 B only if the core has no I/O BAR enum.
+
 `vivado_flash.tcl` JTAG-loads FPGA SRAM (gone on power cycle). For SPI that survives reboot: Hardware Manager → Add Configuration Memory Device → program the `.bit` / generated `.mcs`. There is no `.bit` in this repo; this environment has no Vivado.
 
 ### 2. Laptop USB-connected to the 35T (after the card is up)
