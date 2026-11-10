@@ -84,3 +84,13 @@ The routed audit no longer reports the FT601 CDC-10 or FT601 LUTAR-1. Two CDC-13
 The new scratch candidate is 830,785 bytes with SHA-256 777951086B40D24FFC6225B4A0AE525D21FDD75EB2B8F200D4337CD578034FEC. It supersedes the earlier scratch result for review. It has not been programmed. Confirm the SPI NOR part, the programming and recovery procedure, and the exact image with the operator before programming. After approval and programming, validate cold-boot REV_36 enumeration, Gen2 link training, BAR0 reads, and FT601 transport on the physical bench.
 
 [AMD MMCME2_BASE reset and lock behavior](https://docs.amd.com/r/en-US/ug953-vivado-7series-libraries/MMCME2_BASE?contentId=RNF2jdtjtQy8zOKhFpfrVg)
+
+## SPI identification and recovery preparation
+
+WinUSB is bound to J2 Interface A. The authorized temporary SRAM proxy identified an ISSI IS25LP032, JEDEC bytes 9D 60 16, with 4 MiB capacity. Two complete SPI reads through the loaded proxy matched byte for byte. The local recovery image contains the Xilinx configuration sync word and has SHA-256 C0D072A1F6305F621B380A57FFCFA5894AD5E815CFD9C264D4AE35193385AE5B.
+
+Vivado write_cfgmem converted the audited .bit to an 830,564-byte SPI x4 image for offset 0. Its SHA-256 is A16CD71076D220024D0BE7046EFD635AADB5BB810482B85DC98048A9E97EB5AD. The generated BIN matches the full configuration payload of the audited BIT.
+
+The local flash runner hashes the proxy, recovery image, and candidate, then verifies the current flash against the recovery image. The persistent step is OpenOCD flash write_image erase candidate-spi.bin 0x0 bin followed by flash verify_bank 0 candidate-spi.bin 0. This step awaits explicit operator approval. The next hardware verification starts after a full power-off and cold boot.
+
+[ISSI IS25LP032 datasheet](https://www.issi.com/WW/pdf/IS25LP032-064-128.pdf)
