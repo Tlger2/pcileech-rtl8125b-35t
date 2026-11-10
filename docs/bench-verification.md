@@ -50,3 +50,15 @@ FTDI Table 4.2 specifies 1.0 ns setup and 4.8 ns hold for FPGA-driven signals at
 The BAR0 endpoint now decodes both three- and four-DWORD PCIe read headers. The regression checks the original four-DWORD read at offset 0x00 and a three-DWORD read at offset 0x04 with the transmit path stalled. All four XSim benches passed with the BAR0 fix isolated from the experimental FT601 clock changes. Physical MMIO verification remains pending. A full NIC driver or memory-write test is outside the scope of this read-only check.
 
 [FTDI FT600Q/FT601Q FIFO AC timing](https://ftdichip.com/wp-content/uploads/2020/07/DS_FT600Q-FT601Q-IC-Datasheet.pdf)
+
+## Follow-up clock experiments
+
+| Scratch configuration | Routed setup slack | Routed hold slack |
+| --- | ---: | ---: |
+| Direct MMCM input, fast board-profile outputs, 3 ns output phase | −5.298 ns | −1.534 ns |
+| Direct MMCM input, fast outputs, 5.5 ns output phase | −2.694 ns | +0.034 ns |
+| Shared MMCM, 0 ns input phase and 5.5 ns output phase | −1.661 ns | +0.034 ns |
+
+The shared MMCM case met the output-pin and internal handoff timing, but missed FT601 input setup. The scratch follow-up separates FT601 pin capture from the FIFO logic and models the prior external data launch edge and next-data hold edge. FTDI Table 4.2 gives 3 ns setup and 3.5 ns hold for FT601-driven pins. At 100 MHz, an input sampled at 2.5 ns after CLKOUT must see data launched on the preceding rising edge and retain hold protection against data changes after the current rise. The scratch constraint is scoped to FT601 input ports and the related capture clock. Output timing and internal paths keep their normal checks. Full timing closure is pending.
+
+[AMD phase-shift timing edge selection](https://docs.amd.com/r/en-US/ug903-vivado-using-constraints/Multicycle-Paths-and-Clock-Phase-Shift)
