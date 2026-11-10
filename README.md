@@ -72,14 +72,16 @@ for every defined `X`).
 - **Board:** CaptainDMA 35T (XC7A35T FGG484 + FTDI FT601 USB 3.0 bridge)
 - **Spoof target:** Realtek RTL8125B 2.5GbE NIC
   - VID `0x10EC`, DID `0x8125`, Class `0x020000`, Rev `0x36`
-  - Subsys VID `0x10EC`, SSID `0x0123`
-  - PCIe Gen2 x1, BAR0 64 KB 64-bit prefetchable, BAR1 4 KB
+  - The generated PCIe IP uses subsystem VID `0x10EC` and SSID `0x8125`. The standalone configuration-space test fixture uses SSID `0x0123`.
+  - PCIe Gen2 x1 with a 64 KiB, 64-bit prefetchable BAR0 in the generated PCIe IP
 
 ## Build notes
 
 These modules target the Xilinx 7-Series PCIe integrated block on an XC7A35T. The
 AXI-Stream TX mux assumes the 64-bit `s_axis_tx` interface (Gen2 x1 default); port
 to 128-bit by packing 4 DWs per beat with the same state-machine shape.
+
+[Bench verification and flash readiness](docs/bench-verification.md)
 
 ## License
 
