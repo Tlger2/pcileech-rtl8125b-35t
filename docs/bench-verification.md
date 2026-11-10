@@ -72,3 +72,15 @@ The revised logic captures the FT601 inputs at 0.5 ns after CLKOUT and runs the 
 Vivado 2026.1 completed a clean source-to-bitstream build. Timing was +0.494 ns setup and +0.034 ns hold. The independent checkpoint audit reported 2,977 fully routed nets, zero routing errors, passing bus skew, zero unclocked registers, and zero unconstrained internal endpoints. Bitstream generation reported zero DRC errors. The local scratch image SHA-256 was 0277800DC8A1B8E5804CA01BB93202A16DA9D1E45C41219CE3018D317D9DC45E.
 
 The checkpoint also exposed a CDC-10 warning and LUTAR-1 warning on the combinational FT601 reset qualifier. This scratch image is excluded from the flash plan. The follow-up rebuild uses the MMCM LOCKED output directly for asynchronous assertion and keeps the two-stage synchronized release. The vendor PIPE clock-mux CDC entries are tracked separately.
+
+## Reset-corrected build and flash status
+
+Commit 602ff10b89ce5b5d128e36c46d24986a429c858c uses the MMCM LOCKED signal directly at the reset synchronizer. The bridge startup reset still holds the MMCM in reset until the FT601 is released. Lock loss holds the FIFO logic in reset, with reset release synchronized to the FIFO clock. Cold-boot and any lock-recovery behavior remain hardware checks.
+
+A clean build with Vivado 2026.1 and all four XSim regressions passed. The routed setup and hold margins were +0.494 ns and +0.034 ns. The FT601 pin-input paths measured +0.890 ns setup and +3.776 ns hold, the internal handoff +0.730 ns and +5.069 ns, and the pin-output paths +0.493 ns and +0.966 ns. All 2,969 routable nets routed without errors. Bus skew passed with a worst margin of +9.402 ns. No clockless registers or unconstrained internal endpoints were reported. Bitstream generation reported zero DRC errors.
+
+The routed audit no longer reports the FT601 CDC-10 or FT601 LUTAR-1. Two CDC-13 entries and one LUTAR-1 remain in the generated PCIe IP. The tool also reports FT601 byte-enable direction warnings and an XDCH-1 warning on the input edge pairing. The byte enables are driven on transmit and released on receive. The input path deliberately retains the derived hold edge at 0.5 ns after the next launch. Adding a hold multiplier of 1 would move that check back a full clock period. These findings remain visible in the reports.
+
+The new scratch candidate is 830,785 bytes with SHA-256 777951086B40D24FFC6225B4A0AE525D21FDD75EB2B8F200D4337CD578034FEC. It supersedes the earlier scratch result for review. It has not been programmed. Confirm the SPI NOR part, the programming and recovery procedure, and the exact image with the operator before programming. After approval and programming, validate cold-boot REV_36 enumeration, Gen2 link training, BAR0 reads, and FT601 transport on the physical bench.
+
+[AMD MMCME2_BASE reset and lock behavior](https://docs.amd.com/r/en-US/ug953-vivado-7series-libraries/MMCME2_BASE?contentId=RNF2jdtjtQy8zOKhFpfrVg)
