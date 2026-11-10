@@ -148,56 +148,13 @@ set_property -dict [list \
 # BAR0: donor I/O 256 B. Vivado 2026.1 pcie_7x may only allow Memory on an
 # already-customized core (Bar0_Type IO aborts the whole script without catch).
 # Try IO spellings first; if the enum is Memory-only, recreate the IP once.
-proc pcie7x_try_bar0_io {core} {
-    ip_try_set $core Bar0_Enabled      true
-    ip_try_set $core Bar0_64bit        false
-    ip_try_set $core Bar0_Prefetchable false
-    set allowed {}
-    catch {set allowed [list_property_value CONFIG.Bar0_Type $core]}
-    puts "INFO: Bar0_Type allowed={$allowed}"
-    foreach cand {IO I/O Io io} {
-        if {[ip_try_set $core Bar0_Type $cand]} {
-            ip_try_set $core Bar0_Scale Bytes
-            ip_try_set $core Bar0_Size  256
-            return 1
-        }
-    }
-    return 0
-}
-
-set core [get_ips pcie_7x_0]
-if {![pcie7x_try_bar0_io $core]} {
-    pcie7x_recreate
-    set core [get_ips pcie_7x_0]
-    set_property -dict [list \
-        CONFIG.Vendor_ID                {10EC} \
-        CONFIG.Device_ID                {8125} \
-        CONFIG.Revision_ID              {05} \
-        CONFIG.Subsystem_Vendor_ID      {10EC} \
-        CONFIG.Subsystem_ID             {0123} \
-        CONFIG.Base_Class_Menu          {Network_controller} \
-        CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
-        CONFIG.Link_Speed               {5.0_GT/s} \
-        CONFIG.Maximum_Link_Width       {X1} \
-        CONFIG.Max_Payload_Size         {256_bytes} \
-        CONFIG.Extended_Tag_Field       {false} \
-        CONFIG.AER_Enabled              {true} \
-        CONFIG.DSN_Enabled              {true} \
-        CONFIG.MSIx_Enabled             {true} \
-        CONFIG.MSI_Enabled              {true} \
-        CONFIG.PCIe_Blk_Locn            {X0Y0} \
-        CONFIG.EXT_PCI_CFG_Space        {true} \
-    ] $core
-    if {![pcie7x_try_bar0_io $core]} {
-        puts "WARN: pcie_7x has no I/O BAR0; using Memory 256 B (lspci BAR0 type will not match donor I/O)"
-        ip_try_set $core Bar0_Enabled      true
-        ip_try_set $core Bar0_Type         Memory
-        ip_try_set $core Bar0_64bit        false
-        ip_try_set $core Bar0_Prefetchable false
-        ip_try_set $core Bar0_Scale        Bytes
-        ip_try_set $core Bar0_Size         256
-    }
-}
+# 2026.1 pcie_7x 3.3: Bar0_Type valid values are Memory only. Do not poke IO
+# (it restores the whole IP customization). Donor I/O 256 B is Memory 256 B here.
+puts "WARN: pcie_7x 2026.1 has no I/O BAR0; using Memory 256 B"
+ip_try_set $core Bar0_Enabled      true
+ip_try_set $core Bar0_Type         Memory
+ip_try_set $core Bar0_64bit        false
+ip_try_set $core Bar0_Prefetchable false
 ip_try_set $core Bar0_Scale        Bytes
 ip_try_set $core Bar0_Size         256
 ip_try_set $core Bar1_Enabled      false
@@ -262,12 +219,17 @@ foreach {n v} {
 if {![ip_try_set $core MSIx_Table_Size 32]} {
     ip_try_set $core MSIx_Table_Size 1F
 }
-if {![ip_try_set $core MSIx_Table_BIR BAR_4:5]} {
-    ip_try_set $core MSIx_Table_BIR 4
+# 2026.1 enum is BAR_0, BAR_3:2, BAR_5:4 (BAR4+BAR5 64-bit pair). Not BAR_4:5.
+if {![ip_try_set $core MSIx_Table_BIR BAR_5:4]} {
+    if {![ip_try_set $core MSIx_Table_BIR BAR_3:2]} {
+        ip_try_set $core MSIx_Table_BIR BAR_0
+    }
 }
 ip_try_set $core MSIx_Table_Offset 00000000
-if {![ip_try_set $core MSIx_PBA_BIR BAR_4:5]} {
-    ip_try_set $core MSIx_PBA_BIR 4
+if {![ip_try_set $core MSIx_PBA_BIR BAR_5:4]} {
+    if {![ip_try_set $core MSIx_PBA_BIR BAR_3:2]} {
+        ip_try_set $core MSIx_PBA_BIR BAR_0
+    }
 }
 if {![ip_try_set $core MSIx_PBA_Offset 00000800]} {
     ip_try_set $core MSIx_PBA_Offset 800
