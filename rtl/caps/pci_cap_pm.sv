@@ -1,4 +1,5 @@
 // PCI Power Management Capability (full, with host-writable PMCSR).
+// Donor PMC: D1+ D2+ Aux=375mA PME(D0/D1/D2/D3hot/D3cold) NoSoftRst+
 //   DW0: PMC | Next Ptr | Cap ID (0x01)
 //   DW1: Data | BSE | PMCSR
 
@@ -16,7 +17,8 @@ module pci_cap_pm #(
     output logic [1:0]  current_power_state
 );
     localparam logic [7:0]  CAP_ID = 8'h01;
-    localparam logic [15:0] PMC    = 16'h0003;
+    // ver=3, Aux=375mA, D1, D2, PME from D0/D1/D2/D3hot/D3cold
+    localparam logic [15:0] PMC    = 16'hFFC3;
 
     logic       pme_en_q, pme_status_q;
     logic [1:0] power_state_q;
@@ -25,6 +27,7 @@ module pci_cap_pm #(
 
     logic [31:0] dw0, dw1;
     assign dw0 = {PMC, NEXT_PTR, CAP_ID};
+    // PMCSR: No_Soft_Reset=1 (bit 3)
     assign dw1 = {8'h00, 1'b0, 1'b0, 6'h00,
                   pme_status_q, 2'b00, 4'h0,
                   pme_en_q, 4'h0, 1'b1, 1'b0, power_state_q};

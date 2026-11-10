@@ -61,8 +61,14 @@ module ft601_sfifo (
                 else if (rx_request)
                     next_state = RX_OE;
             end
-            RX_OE: next_state = ft601_rxf_n ? TURN : RX_READ;
-            TX_SETUP: next_state = ft601_txe_n ? TURN : TX_WRITE;
+            RX_OE: begin
+                if (ft601_rxf_n) next_state = TURN;
+                else             next_state = RX_READ;
+            end
+            TX_SETUP: begin
+                if (ft601_txe_n) next_state = TURN;
+                else             next_state = TX_WRITE;
+            end
             RX_READ, TX_WRITE: next_state = TURN;
             default: next_state = IDLE;
         endcase

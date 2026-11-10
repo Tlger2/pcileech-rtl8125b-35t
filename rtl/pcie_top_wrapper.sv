@@ -1,4 +1,5 @@
 // Top-level integration for the custom PCIe endpoint on CaptainDMA 35T.
+// cfg_dsn is MAC-derived (Realtek OUI) from rtl8125b_identity_pkg.
 //
 // Instantiates pcie_7x_0 (Xilinx 7-Series Integrated Block for PCIe) and
 // wires every port of pcie_custom_endpoint_top to the correct core signal.
@@ -87,7 +88,7 @@ module pcie_top_wrapper (
 
     logic        cfg_interrupt, cfg_interrupt_rdy, cfg_interrupt_assert;
     logic [7:0]  cfg_interrupt_di, cfg_interrupt_do;
-    logic        cfg_interrupt_msienable, cfg_interrupt_msixenable;
+    logic        cfg_interrupt_msienable, cfg_interrupt_msixenable, cfg_interrupt_msixfm;
     logic [2:0]  cfg_interrupt_mmenable;
 
     // Link Status register — bits[3:0] = current link speed, bits[9:4] = width
@@ -99,6 +100,21 @@ module pcie_top_wrapper (
     logic [15:0] cfg_lstatus, cfg_dcommand;
     assign cfg_max_payload_size = cfg_dcommand[7:5];
     assign cfg_max_read_req_size = cfg_dcommand[14:12];
+
+    // Vivado 2026.1 pcie_7x 3.3 stub has no cfg_ext_* ports even with
+    // EXT_PCI_CFG_Space true. Keep the donor ECAP ROM synthesizable and
+    // idle; DSN still comes from cfg_dsn on the core.
+    logic [31:0] cfg_ext_ecap_rdata;
+    pcie_ecap_router u_cfg_ext_ecap (
+        .clk        (user_clk_q),
+        .rst_n      (~user_reset_q),
+        .cfg_rd_en  (1'b0),
+        .cfg_wr_en  (1'b0),
+        .cfg_dwaddr (10'h0),
+        .cfg_be     (4'h0),
+        .cfg_wdata  (32'h0),
+        .cfg_rdata  (cfg_ext_ecap_rdata)
+    );
 
     pcie_7x_0 u_pcie_7x (
         .pci_exp_txp              (pci_exp_txp),
@@ -165,7 +181,7 @@ module pcie_top_wrapper (
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_msixenable (cfg_interrupt_msixenable),
-        .cfg_interrupt_msixfm     (),
+        .cfg_interrupt_msixfm     (cfg_interrupt_msixfm),
         .cfg_interrupt_stat       (1'b0),
         .cfg_pciecap_interrupt_msgnum (5'h0),
 
@@ -202,11 +218,12 @@ module pcie_top_wrapper (
         // Defaults from the generated core for unused interfaces.
         .cfg_trn_pending              (1'b0),
         .cfg_turnoff_ok               (1'b0),
-        .cfg_dsn                      (64'b0),
+        .cfg_dsn                      (rtl8125b_identity_pkg::CFG_DSN),
         .cfg_ds_bus_number            (8'b0),
         .cfg_ds_device_number         (5'b0),
         .cfg_ds_function_number       (3'b0),
         .cfg_mgmt_wr_rw1c_as_rw       (1'b0),
+
         .pl_directed_link_change      (2'b0),
         .pl_directed_link_width       (2'b0),
         .pl_directed_link_speed       (1'b0),
@@ -258,6 +275,8 @@ module pcie_top_wrapper (
         .cfg_interrupt_di         (cfg_interrupt_di),
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
+        .cfg_interrupt_msixenable (cfg_interrupt_msixenable),
+        .cfg_interrupt_msixfm     (cfg_interrupt_msixfm),
 
         .ft601_clk                (ft601_clk),
         .ft601_rst_n              (ft601_reset_release[1]),

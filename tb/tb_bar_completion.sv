@@ -23,6 +23,7 @@ module tb_bar_completion;
         .link_width_live(6'd1), .cfg_interrupt(), .cfg_interrupt_rdy(1'b0),
         .cfg_interrupt_assert(), .cfg_interrupt_di(),
         .cfg_interrupt_msienable(1'b0), .cfg_interrupt_mmenable(3'b0),
+        .cfg_interrupt_msixenable(1'b0), .cfg_interrupt_msixfm(1'b0),
         .ft601_clk(ft601_clk), .ft601_rst_n(!user_reset), .ft601_rxf_n(1'b1),
         .ft601_oe_n(), .ft601_rd_n(), .ft601_wr_n(), .ft601_txe_n(1'b1),
         .ft601_data(), .ft601_be()
@@ -60,7 +61,7 @@ module tb_bar_completion;
         user_reset = 0;
         request_read(8'h5a);
         expect_beat(64'h0200_0004_4a00_0001, 0, 0);
-        expect_beat(64'h4c12_3456_1234_5a00, 1, 0);
+        expect_beat(64'h7A4C_E000_1234_5a00, 1, 0);
         repeat (4) @(negedge user_clk);
         if (tx_valid) $fatal(1, "Unexpected duplicate completion");
 
@@ -72,7 +73,7 @@ module tb_bar_completion;
         #1;
         tx_ready = 0;
         completer_id = 16'habcd;
-        expect_beat(64'h4c12_3456_1234_7b00, 1, 1);
+        expect_beat(64'h7A4C_E000_1234_7b00, 1, 1);
         repeat (4) @(negedge user_clk);
         if (tx_valid) $fatal(1, "Unexpected duplicate completion after a stall");
         $display("PASS: BAR completion delivers both beats with ready high or stalled");
