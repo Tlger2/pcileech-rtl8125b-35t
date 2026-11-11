@@ -151,12 +151,17 @@ set_false_path -hold \
 
 #------------------------------------------------------------------------------
 # FT601 input/output delays — FTDI DS_FT600Q-FT601Q v1.06 table 4.2
-# 100 MHz, zero PCB skew assumed.
+# T2 slave hold 3.5 ns, T3 master setup 1.0 ns, T4 master hold 4.8 ns.
+# Do not false-path T4: J3 (reader) uses this bus. IOB FFs are too fast
+# (~2.5 ns Tco vs 4.8 ns hold); SLEW SLOW plus fabric T-regs pad hold.
+# Setup still closes: period 10 ns minus T3 leaves ~9 ns for Tco.
 #------------------------------------------------------------------------------
 set_input_delay  -clock ft601_clk -min  3.5 [get_ports {ft601_rxf_n ft601_txe_n ft601_data[*]}]
 set_input_delay  -clock ft601_clk -max  7.0 [get_ports {ft601_rxf_n ft601_txe_n ft601_data[*]}]
 set_output_delay -clock ft601_clk -min -4.8 [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
 set_output_delay -clock ft601_clk -max  1.0 [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
+set_property SLEW SLOW [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
+set_property DRIVE 4   [get_ports {ft601_wr_n ft601_rd_n ft601_oe_n ft601_data[*] ft601_be[*]}]
 
 #------------------------------------------------------------------------------
 # False paths — async board signals with no synchronous external timing

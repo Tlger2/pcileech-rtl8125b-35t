@@ -8,9 +8,9 @@ module ft601_sfifo (
     // ---- FT601 physical pins ----
     input  logic        ft601_rxf_n,    // RX FIFO not-empty (active low)
     input  logic        ft601_txe_n,    // TX FIFO not-full  (active low)
-    (* IOB = "TRUE" *) output logic ft601_oe_n, // Output Enable (active low)
-    (* IOB = "TRUE" *) output logic ft601_rd_n, // Read strobe (active low)
-    (* IOB = "TRUE" *) output logic ft601_wr_n, // Write strobe (active low)
+    output logic        ft601_oe_n, // Output Enable (active low)
+    output logic        ft601_rd_n, // Read strobe (active low)
+    output logic        ft601_wr_n, // Write strobe (active low)
     inout  wire  [31:0] ft601_data,     // Bidirectional 32-bit bus
     inout  wire   [3:0] ft601_be,       // Byte enable (bidirectional)
 
@@ -29,8 +29,10 @@ module ft601_sfifo (
     typedef enum logic [2:0] {IDLE, RX_OE, RX_READ, TX_SETUP, TX_WRITE, TURN} state_t;
     state_t state, next_state;
     logic tx_pending, prefer_tx;
-    (* IOB = "TRUE" *) logic [31:0] tx_data;
-    (* IOB = "TRUE" *) logic [3:0] tx_be;
+    // Do not force IOB FFs on DATA/BE. FT601 T4 hold is 4.8 ns; an IOB
+    // OBUFT Tco of ~2.5 ns fails hold and has nothing left to pad.
+    logic [31:0] tx_data;
+    logic [3:0] tx_be;
     wire rx_request = !ft601_rxf_n && (!fifo_rd_valid || fifo_rd_ready);
     wire tx_request = tx_pending && !ft601_txe_n;
 
@@ -39,9 +41,9 @@ module ft601_sfifo (
     wire [35:0] pin_bus;
     assign {ft601_be, ft601_data} = pin_bus;
     for (genvar bit_index = 0; bit_index < 36; bit_index++) begin : gen_pin
-        // Preserve a tristate register per pin so placement can pack it into
-        // that pin's I/O block instead of routing a shared control net.
-        (* IOB = "TRUE", DONT_TOUCH = "TRUE" *) logic tristate_pin;
+        // Fabric T-register: hold padding vs FT601 T4=4.8 ns. Setup still
+        // has several ns of slack (max output delay is 1.0 ns).
+        logic tristate_pin;
         always_ff @(posedge clk or negedge rst_n) begin
             if (!rst_n)
                 tristate_pin <= 1'b1;
