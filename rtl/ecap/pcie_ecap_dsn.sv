@@ -4,7 +4,8 @@
 //
 // The 64-bit serial is derived from the RTL8125B default MAC address (00:E0:4C:12:34:56):
 //   DSN_LO = {MAC[23:0],  8'h00}  = 0x1234_5600
-//   DSN_HI = {8'h00, OUI[23:0]}   = 0x00E0_4C00
+//   DSN_HI = {8'h00, OUI[23:0]}   = 0x0000_E04C
+//   (OUI 00:E0:4C → MAC[47:24]=0x00_E0_4C → DSN_HI[23:0])
 //
 // Adjust MAC_ADDR to match whatever MAC you burned into rtl8125b_bar0_regs so the
 // DSN stays consistent with what the driver reads from BAR0 offset 0x00.

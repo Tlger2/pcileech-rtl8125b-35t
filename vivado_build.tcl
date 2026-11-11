@@ -64,7 +64,7 @@ if {[file isdirectory $xdc_dir]} {
 
 # ---------------------------------------------------------------------------
 # 4. Configure pcie_7x_0 IP
-#    RTL8125B 2.5GbE NIC identity, x1 Gen2, BAR0=64KB 64-bit, cfg_ext ON
+#    RTL8125B 2.5GbE NIC identity, x1 Gen3, BAR0=256B I/O, BAR2=4KB MMIO, cfg_ext ON
 # ---------------------------------------------------------------------------
 # Check if IP already exists
 set ip_exists [get_ips -quiet pcie_7x_0]
@@ -91,30 +91,35 @@ if {[llength $ip_exists] == 0} {
     #   Class_Code   → removed (derived from Base_Class_Menu + Sub_Class_Interface_Menu)
     #   Max_Link_Width → removed (use Maximum_Link_Width only)
     set_property -dict [list \
-        CONFIG.Bar0_Scale               {Kilobytes} \
-        CONFIG.Bar0_Size                {64} \
-        CONFIG.Bar0_64bit               {true} \
-        CONFIG.Bar0_Prefetchable        {true} \
+        CONFIG.Bar0_IO                  {true} \
+        CONFIG.Bar0_Scale               {Bytes} \
+        CONFIG.Bar0_Size                {256} \
+        CONFIG.Bar0_64bit               {false} \
+        CONFIG.Bar0_Prefetchable        {false} \
         CONFIG.Bar1_Enabled             {false} \
-        CONFIG.Bar2_Enabled             {false} \
+        CONFIG.Bar2_Enabled             {true} \
+        CONFIG.Bar2_Scale               {Kilobytes} \
+        CONFIG.Bar2_Size                {4} \
+        CONFIG.Bar2_64bit               {false} \
+        CONFIG.Bar2_Prefetchable        {false} \
         CONFIG.Bar3_Enabled             {false} \
         CONFIG.Bar4_Enabled             {false} \
         CONFIG.Bar5_Enabled             {false} \
         CONFIG.Vendor_ID                {10EC} \
         CONFIG.Device_ID                {8125} \
-        CONFIG.Revision_ID              {36} \
-        CONFIG.Subsystem_Vendor_ID      {10EC} \
-        CONFIG.Subsystem_ID             {0123} \
+        CONFIG.Revision_ID              {05} \
+        CONFIG.Subsystem_Vendor_ID      {1043} \
+        CONFIG.Subsystem_ID             {87D3} \
         CONFIG.Base_Class_Menu          {Network_controller} \
         CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
-        CONFIG.Link_Speed               {5.0_GT/s} \
+        CONFIG.Link_Speed               {8.0_GT/s} \
         CONFIG.Maximum_Link_Width       {X1} \
         CONFIG.Max_Payload_Size         {256_bytes} \
         CONFIG.Extended_Tag_Field       {false} \
         CONFIG.AER_Enabled              {true} \
         CONFIG.VC_Cap_Enabled           {false} \
         CONFIG.DSN_Enabled              {true} \
-        CONFIG.MSIx_Enabled             {false} \
+        CONFIG.MSIx_Enabled             {true} \
         CONFIG.MSI_Enabled              {true} \
         CONFIG.PCIe_Blk_Locn            {X0Y0} \
         CONFIG.EXT_PCI_CFG_Space        {true} \

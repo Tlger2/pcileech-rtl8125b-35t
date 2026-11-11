@@ -4,14 +4,15 @@
 // Identity:
 //   Vendor ID            0x10EC
 //   Device ID            0x8125
-//   Revision ID          0x36
+//   Revision ID          0x05  (RTL8125B silicon stepping)
 //   Class Code           0x020000 (Network / Ethernet)
-//   Subsystem Vendor ID  0x10EC
-//   Subsystem ID         0x0123
+//   Subsystem Vendor ID  0x1043  (ASUS retail)
+//   Subsystem ID         0x87D3  (ASUS retail)
 //   Header Type          0x00
 //
 // BARs:
-//   BAR0 : 64-bit prefetchable, 64 KiB aperture (BAR1 = upper 32-bit half of pair)
+//   BAR0 : 32-bit I/O port, 256-byte aperture (bit[0]=1 I/O type)
+//   BAR1 : disabled (independent BAR, not upper half of 64-bit pair)
 //   BAR2 : 32-bit non-prefetchable, 4 KiB
 //   BAR3..BAR5 : disabled
 //
@@ -20,11 +21,11 @@
 module pci_type0_cfg_header #(
     parameter logic [15:0] VENDOR_ID        = 16'h10EC,
     parameter logic [15:0] DEVICE_ID        = 16'h8125,
-    parameter logic [7:0]  REVISION_ID      = 8'h36,
+    parameter logic [7:0]  REVISION_ID      = 8'h05,          // RTL8125B silicon stepping
     parameter logic [23:0] CLASS_CODE       = 24'h020000,
-    parameter logic [15:0] SUBSYS_VENDOR_ID = 16'h10EC,
-    parameter logic [15:0] SUBSYS_ID        = 16'h0123,
-    parameter logic [31:0] BAR0_SIZE_MASK   = 32'hFFFF_0000,  // 64 KiB (RTL8125B)
+    parameter logic [15:0] SUBSYS_VENDOR_ID = 16'h1043,       // ASUS retail SVID
+    parameter logic [15:0] SUBSYS_ID        = 16'h87D3,       // ASUS retail SSID
+    parameter logic [31:0] BAR0_SIZE_MASK   = 32'hFFFF_FF00,  // 256-byte I/O port
     parameter logic [31:0] BAR1_SIZE_MASK   = 32'hFFFF_FFFF,
     parameter logic [31:0] BAR2_SIZE_MASK   = 32'hFFFF_F000,  // 4 KiB
     parameter logic [7:0]  CAP_PTR          = 8'h40
@@ -94,7 +95,7 @@ module pci_type0_cfg_header #(
     assign cmd_serr_en         = cmd_serr_en_q;
     assign cmd_intx_disable    = cmd_intx_disable_q;
 
-    assign bar0_base_64   = {bar1_q, bar0_q & BAR0_SIZE_MASK};
+    assign bar0_base_64   = {32'h0, bar0_q & BAR0_SIZE_MASK};  // 32-bit I/O port; upper word always 0
     assign bar2_base_32   = bar2_q & BAR2_SIZE_MASK;
     assign interrupt_line = interrupt_line_q;
 
@@ -138,8 +139,8 @@ module pci_type0_cfg_header #(
             6'd1:  cfg_rdata = {status_rd, command_rd};
             6'd2:  cfg_rdata = {CLASS_CODE, REVISION_ID};
             6'd3:  cfg_rdata = {8'h00, 8'h00, 8'h00, cache_line_size_q};
-            6'd4:  cfg_rdata = (bar0_q & BAR0_SIZE_MASK) | 32'h0000_000C;
-            6'd5:  cfg_rdata = bar1_q;
+            6'd4:  cfg_rdata = (bar0_q & BAR0_SIZE_MASK) | 32'h0000_0001;  // bit[0]=1: I/O space
+            6'd5:  cfg_rdata = 32'h0;  // BAR1 disabled (not upper half of 64-bit pair)
             6'd6:  cfg_rdata = (bar2_q & BAR2_SIZE_MASK) | 32'h0000_0000;
             6'd7:  cfg_rdata = 32'h0;
             6'd8:  cfg_rdata = 32'h0;
