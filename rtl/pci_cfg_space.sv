@@ -24,6 +24,7 @@ module pci_cfg_space #(
     output logic [31:0] cfg_rdata,
 
     // Header side-effect outputs
+    output logic        cmd_io_space_en,
     output logic        cmd_mem_space_en,
     output logic        cmd_bus_master_en,
     output logic        cmd_intx_disable,
@@ -80,7 +81,7 @@ module pci_cfg_space #(
         .cfg_wdata                     (cfg_wdata),
         .cfg_rdata                     (hdr_rdata),
         .cfg_access_ok                 (),
-        .cmd_io_space_en               (),
+        .cmd_io_space_en               (cmd_io_space_en),
         .cmd_mem_space_en              (cmd_mem_space_en),
         .cmd_bus_master_en             (cmd_bus_master_en),
         .cmd_parity_err_resp           (),

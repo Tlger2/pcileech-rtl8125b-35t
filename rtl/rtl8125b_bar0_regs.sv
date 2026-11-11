@@ -1,12 +1,12 @@
 // RTL8125B BAR0 register bank.
 //
-// 64 KiB BAR0 window (matching the real RTL8125B BAR0 aperture) with the
-// init-time polled registers from the Linux r8169 driver
+// 256-byte BAR0 I/O aperture (matching the real RTL8125B BAR0 aperture) with
+// the init-time polled registers from the Linux r8169 driver
 // (RTL_GIGA_MAC_VER_61). Named registers return realistic defaults;
-// everything else lands in a 16K-DW shadow RAM so unexpected writes are
+// everything else lands in a 64-DW shadow RAM so unexpected writes are
 // preserved and read back as a real NIC would.
 //
-// Address bus is 16-bit (byte-addressed, 64 KiB), DW index is 14-bit.
+// Address bus is 8-bit (byte-addressed, 256 B), DW index is 6-bit.
 //
 // Link-up appears after a bounded auto-neg delay (default ~400 ms at
 // 62.5 MHz) so drivers don't see link-up on cycle 0.
@@ -21,7 +21,7 @@ module rtl8125b_bar0_regs #(
 
     input  logic        mem_wr_en,
     input  logic        mem_rd_en,
-    input  logic [15:0] mem_byte_addr,
+    input  logic [7:0]  mem_byte_addr,
     input  logic [31:0] mem_wdata,
     input  logic [3:0]  mem_be,
     output logic [31:0] mem_rdata,
@@ -67,15 +67,15 @@ module rtl8125b_bar0_regs #(
 
     logic [31:0] shadow_read;
 
-    logic [13:0] dw_idx;
+    logic [5:0]  dw_idx;
     logic [7:0]  reg_off;
-    assign dw_idx  = mem_byte_addr[15:2];
-    assign reg_off = mem_byte_addr[7:0];
+    assign dw_idx  = mem_byte_addr[7:2];
+    assign reg_off = mem_byte_addr;
 
     // The current endpoint does not deliver Memory Write payloads. It can
     // omit this storage while keeping unmapped offsets at their reset value.
     if (ENABLE_SHADOW) begin : gen_shadow
-        logic [31:0] shadow_mem [0:16383];
+        logic [31:0] shadow_mem [0:63];
         wire named_write = reg_off == REG_MAC0 || reg_off == REG_MAC4 ||
             reg_off == REG_TXCONFIG || reg_off == REG_RXCONFIG ||
             reg_off == REG_INTRMASK || reg_off == REG_INTRSTATUS ||
@@ -83,7 +83,7 @@ module rtl8125b_bar0_regs #(
         assign shadow_read = shadow_mem[dw_idx];
         always_ff @(posedge clk or negedge rst_n) begin
             if (!rst_n) begin
-                for (int i = 0; i < 16384; i++) shadow_mem[i] <= '0;
+                for (int i = 0; i < 64; i++) shadow_mem[i] <= '0;
             end else if (mem_wr_en && !named_write) begin
                 for (int b = 0; b < 4; b++)
                     if (mem_be[b]) shadow_mem[dw_idx][8*b +: 8] <= mem_wdata[8*b +: 8];

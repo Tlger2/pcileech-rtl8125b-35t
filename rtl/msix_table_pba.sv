@@ -1,4 +1,4 @@
-// MSI-X Table + PBA storage, memory-mapped inside BAR0.
+// MSI-X Table + PBA storage, memory-mapped inside BAR2 (MMIO aperture).
 // Table: NUM_VECTORS * 16 bytes starting at TABLE_BAR_BYTE_BASE
 // PBA  : NUM_VECTORS bits packed into DWs at PBA_BAR_BYTE_BASE
 // At reset all vectors are masked per PCIe spec (Vector Control bit 0 = 1).
@@ -6,7 +6,7 @@
 module msix_table_pba #(
     parameter int NUM_VECTORS         = 8,
     parameter int TABLE_BAR_BYTE_BASE = 'h0000,
-    parameter int PBA_BAR_BYTE_BASE   = 'h1000
+    parameter int PBA_BAR_BYTE_BASE   = 'h0080  // must match PBA_QW_OFFSET*8 in pci_cap_msix (29'h10 → 0x80)
 ) (
     input  logic        clk,
     input  logic        rst_n,

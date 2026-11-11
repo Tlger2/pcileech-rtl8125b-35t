@@ -1,16 +1,18 @@
-// Memory-space BAR aperture decoder with MSE enforcement.
-// Match inbound MemRd/MemWr TLP target addresses against enabled BARs;
-// emit no hit when Command[1] (Memory Space Enable) is clear.
+// BAR aperture decoder — I/O space (BAR0) and memory space (BAR2).
+// BAR0 hit gated by IOCE  (Command[0], I/O Space Enable).
+// BAR2 hit gated by MSE   (Command[1], Memory Space Enable).
+// Emit no hit when the matching enable is clear.
 //
 // BAR map (RTL8125B spoof):
-//   BAR0 = 64-bit prefetchable, 64 KiB (BAR1 = upper half)
-//   BAR2 = 32-bit non-prefetchable, 4 KiB
+//   BAR0 = 32-bit I/O port, 256 bytes  (IORd/IOWr TLPs, 16-bit address)
+//   BAR2 = 32-bit non-prefetchable MMIO, 4 KiB
 
 module pcie_bar_decoder #(
-    parameter int BAR0_LOG2_SIZE = 14,  // 2^14 = 16 KiB (RTL8125B)
-    parameter int BAR2_LOG2_SIZE = 12   // 2^12 = 4 KiB
+    parameter int BAR0_LOG2_SIZE = 8,   // 2^8  = 256 bytes  I/O aperture
+    parameter int BAR2_LOG2_SIZE = 12   // 2^12 = 4 KiB      MMIO aperture
 ) (
-    input  logic        mse,
+    input  logic        ioce,           // Command[0] I/O Space Enable  (for BAR0)
+    input  logic        mse,            // Command[1] Memory Space Enable (for BAR2)
     input  logic [63:0] bar0_base_64,
     input  logic [31:0] bar2_base_32,
     input  logic [63:0] tlp_addr,
@@ -32,8 +34,8 @@ module pcie_bar_decoder #(
     assign bar2_base_programmed = (bar2_base_32 != 32'h0);
 
     logic bar0_hit, bar2_hit;
-    assign bar0_hit = mse && bar0_match_raw && bar0_base_programmed;
-    assign bar2_hit = mse && bar2_match_raw && bar2_base_programmed;
+    assign bar0_hit = ioce && bar0_match_raw && bar0_base_programmed;
+    assign bar2_hit = mse  && bar2_match_raw && bar2_base_programmed;
 
     always_comb begin
         bar_hit       = 1'b0;
