@@ -1,0 +1,47 @@
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %Mfg%
+DriverVer   = 11/10/2026,1.0.0.0
+CatalogFile = eacspoofer.cat
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,""
+
+[SourceDisksFiles]
+eacspoofer.sys = 1,,
+
+[Manufacturer]
+%Mfg% = Std, NTamd64.10.0...16299
+
+[Std.NTamd64.10.0...16299]
+%DeviceDesc% = SpoofInstall, Root\EacSpoofer
+
+[SpoofInstall.NT]
+CopyFiles = @eacspoofer.sys
+
+[SpoofInstall.NT.Services]
+AddService = EacSpoofer,0x00000002,SpoofService
+
+[SpoofService]
+DisplayName    = %ServiceName%
+ServiceType    = 1
+StartType      = 3
+ErrorControl   = 1
+ServiceBinary  = %12%\eacspoofer.sys
+AddReg         = SpoofAddReg
+
+[SpoofAddReg]
+HKLM,System\CurrentControlSet\Services\EacSpoofer,ImagePath,0x00020000,"\SystemRoot\System32\drivers\eacspoofer.sys"
+HKLM,System\CurrentControlSet\Services\EacSpoofer\Parameters,Modules,0x00010001,0
+
+[Strings]
+Mfg         = "EacSpoofer"
+DiskName    = "EacSpoofer"
+DeviceDesc  = "EAC-grade identity filter"
+ServiceName = "EacSpoofer"
