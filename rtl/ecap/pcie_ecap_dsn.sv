@@ -1,6 +1,17 @@
 // PCI Express Extended Capability — Device Serial Number (DSN).
-// ECAP ID 0x0003, version 1.  3 DWs at donor offset 0x168.
-// Serial is derived from rtl8125b_identity_pkg::MAC_ADDR (Realtek OUI).
+// ECAP ID 0x0003, version 1.  3 DWs (header + 2 data DWs), byte range 0x150..0x158.
+//
+// The 64-bit serial is derived from the RTL8125B default MAC address (00:E0:4C:12:34:56):
+//   DSN_LO = {MAC[23:0],  8'h00}  = 0x1234_5600
+//   DSN_HI = {8'h00, OUI[23:0]}   = 0x0000_E04C
+//   (OUI 00:E0:4C → MAC[47:24]=0x00_E0_4C → DSN_HI[23:0])
+//
+// Adjust MAC_ADDR to match whatever MAC you burned into rtl8125b_bar0_regs so the
+// DSN stays consistent with what the driver reads from BAR0 offset 0x00.
+//
+// INTEGRATION: same constraints as pcie_ecap_aer.sv — feed the ECAP_HEADER / DSN
+// constants to the Vivado IP wizard under Extended Capabilities > Device Serial Number,
+// or use in a soft PCIe endpoint path.
 
 module pcie_ecap_dsn
     import rtl8125b_identity_pkg::*;
