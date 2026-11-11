@@ -97,9 +97,11 @@ module rtl8125b_bar0_regs
     // bit0 FullDup, bit1 LinkSts, bit4 1000, bit5 rx-flow, bit6 tx-flow
     assign phystatus = link_up_q ? 8'b0101_0011 : 8'b0000_0000;
 
-    logic [13:0] dw_idx;
+    // BAR0 is a 256 B window (64 DWs). A 16K-DW shadow with async reset
+    // infers FFs, not BRAM: 524288 FFs / ~262K LUTs on a 41600 / 20800 part.
+    logic [5:0]  dw_idx;
     logic [7:0]  byte_off;
-    assign dw_idx   = mem_byte_addr[15:2];
+    assign dw_idx   = mem_byte_addr[7:2];
     assign byte_off = mem_byte_addr[7:0];
     wire         in_low256 = (mem_byte_addr[15:8] == 8'h00);
 
@@ -133,11 +135,11 @@ module rtl8125b_bar0_regs
     );
 
     if (ENABLE_SHADOW) begin : gen_shadow
-        logic [31:0] shadow_mem [0:16383];
+        logic [31:0] shadow_mem [0:63];
         assign shadow_read = shadow_mem[dw_idx];
         always_ff @(posedge clk or negedge rst_n) begin
             if (!rst_n) begin
-                for (int i = 0; i < 16384; i++) shadow_mem[i] <= '0;
+                for (int i = 0; i < 64; i++) shadow_mem[i] <= '0;
             end else if (mem_wr_en && !named_low) begin
                 for (int b = 0; b < 4; b++)
                     if (mem_be[b]) shadow_mem[dw_idx][8*b +: 8] <= mem_wdata[8*b +: 8];
