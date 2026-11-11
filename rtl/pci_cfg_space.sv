@@ -23,6 +23,7 @@ module pci_cfg_space
     input  logic [31:0] cfg_wdata,
     output logic [31:0] cfg_rdata,
 
+    // Header side-effect outputs
     output logic        cmd_io_space_en,
     output logic        cmd_mem_space_en,
     output logic        cmd_bus_master_en,
