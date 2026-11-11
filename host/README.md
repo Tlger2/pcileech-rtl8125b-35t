@@ -23,9 +23,12 @@ frame round-trip:
 
 ```
 python ft601_client.py --selftest
+python ft601_client.py --identify
 ```
 
-On hardware:
+`--identify` lists FT601 USB (`VID 0403 PID 601F`) and tries MAGIC `0x5AA5C33C`. `magic_ok` is only true after this bitstream answers; stock CaptainDMA firmware uses MemProcFS `fpga`, not MAGIC.
+
+On hardware (this firmware):
 
 ```
 python ft601_client.py --ping

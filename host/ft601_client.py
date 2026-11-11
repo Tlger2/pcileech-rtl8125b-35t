@@ -317,6 +317,96 @@ class FT601Client:
             flags=0, address=0, payload=[]
         ))
 
+    def identify(self) -> dict:
+        """USB + MAGIC handshake. See module-level identify()."""
+        return identify(self)
+
+
+def _list_ft601(vid: int = FT601Client.DEFAULT_VID,
+                pid: int = FT601Client.DEFAULT_PID) -> list[dict]:
+    found: list[dict] = []
+    try:
+        import usb.core  # type: ignore
+    except ImportError:
+        return found
+    try:
+        for dev in usb.core.find(find_all=True, idVendor=vid, idProduct=pid) or []:
+            found.append({
+                "vid": int(dev.idVendor),
+                "pid": int(dev.idProduct),
+                "bus": getattr(dev, "bus", None),
+                "address": getattr(dev, "address", None),
+            })
+    except Exception:
+        return found
+    return found
+
+
+def identify(client: Optional[FT601Client] = None) -> dict:
+    """Enumerate FT601 (VID 0403 PID 601F), then try MAGIC 0x5AA5C33C.
+
+    Stock CaptainDMA firmware uses the same USB IDs but speaks MemProcFS
+    `fpga`, not this MAGIC. `magic_ok` is True only after a VERSION/KEEPALIVE
+    response. This does not dump guest memory.
+    """
+    vid = client._vid if client is not None else FT601Client.DEFAULT_VID
+    pid = client._pid if client is not None else FT601Client.DEFAULT_PID
+    devices = _list_ft601(vid, pid)
+    out: dict = {
+        "vid": vid,
+        "pid": pid,
+        "usb_id": f"{vid:04X}:{pid:04X}",
+        "usb": bool(devices),
+        "devices": devices,
+        "magic": f"0x{FRAME_MAGIC:08X}",
+        "magic_ok": False,
+        "pcileech_fpga_tlp_stream": False,
+        "protocol": "magic-0x5AA5C33C",
+    }
+    if not _HAVE_PYFTDI:
+        out["error"] = "pyftdi is not installed"
+        return out
+    if not devices:
+        out["error"] = "no FT601 VID 0403 PID 601F"
+        return out
+    owns = client is None
+    dev = client
+    try:
+        if owns:
+            dev = FT601Client(vid=vid, pid=pid)
+            dev.open()
+        assert dev is not None
+        try:
+            ver = dev.get_version()
+            out["magic_ok"] = True
+            out["version"] = {
+                "opcode": int(ver.opcode),
+                "flags": ver.flags,
+                "payload": list(ver.payload),
+            }
+        except Exception:
+            ping = dev.ping()
+            out["magic_ok"] = True
+            out["ping"] = {
+                "opcode": int(ping.opcode),
+                "flags": ping.flags,
+                "payload": list(ping.payload),
+            }
+    except Exception as exc:
+        out["magic_ok"] = False
+        out["error"] = (
+            f"USB present but MAGIC 0x{FRAME_MAGIC:08X} handshake failed ({exc}). "
+            "Stock CaptainDMA: MemProcFS VMM_DEVICE=fpga. "
+            "This repo MAGIC bitstream is PR #5 and needs a Vivado flash."
+        )
+    finally:
+        if owns and dev is not None:
+            try:
+                dev.close()
+            except Exception:
+                pass
+    return out
+
 
 # ------------------------------------------------------------------
 # Self-test: offline bijection + round-trip framing (no hardware)
@@ -346,14 +436,20 @@ def _selftest() -> None:
     assert f2.opcode == Opcode.WRITE_BURST
     assert f2.address == 0x0000_1000
     assert f2.payload == f.payload
+    ident = identify()
+    assert ident["magic"] == "0x5AA5C33C"
+    assert ident["pcileech_fpga_tlp_stream"] is False
     print("ft601_client self-test: OK")
 
 
 if __name__ == "__main__":
     import argparse
+    import json
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true",
                     help="run offline bijection + frame round-trip")
+    ap.add_argument("--identify", action="store_true",
+                    help="enumerate FT601 USB and try MAGIC 0x5AA5C33C handshake")
     ap.add_argument("--ping", action="store_true",
                     help="open FT601, send KEEPALIVE, print response")
     ap.add_argument("--read", type=lambda x: int(x, 0),
@@ -365,6 +461,8 @@ if __name__ == "__main__":
 
     if args.selftest:
         _selftest()
+    if args.identify:
+        print(json.dumps(identify(), indent=2))
     if args.ping:
         with FT601Client() as dev:
             print(dev.ping())
