@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Never Banned — Rust</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="titlebar">
+      <div class="win-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+      <h1>Never Banned — Rust</h1>
+      <p class="quote">“in the end you are never truly banned” — Hellon Wong</p>
+      <span class="mode-pill">READ ONLY</span>
+    </header>
+
+    <div class="stage">
+      <aside class="hud-left">
+        <div class="panel hud-stats" id="hud-stats"></div>
+      </aside>
+
+      <div class="map-wrap">
+        <canvas id="map"></canvas>
+        <canvas id="overlay"></canvas>
+        <div id="player-card" class="panel player-card hidden"></div>
+        <div class="panel loot-filter" id="loot-filter"></div>
+        <div class="esp-pane panel" id="esp-pane">
+          <div class="panel-head">World ESP <span class="muted">bone / box · read</span></div>
+          <canvas id="esp"></canvas>
+        </div>
+      </div>
+
+      <aside class="hud-right">
+        <div class="icon-row">
+          <button type="button" data-tab="radar" class="icon-btn active" title="Radar">◉</button>
+          <button type="button" data-tab="settings" class="icon-btn" title="Settings">⚙</button>
+          <button type="button" data-tab="loot" class="icon-btn" title="Dropped items">▣</button>
+          <button type="button" data-tab="hotkeys" class="icon-btn" title="Hotkeys">⌨</button>
+        </div>
+
+        <div class="panel menu" id="main-menu">
+          <div class="panel-head">Main Menu</div>
+
+          <section>
+            <h3>DMA Connection</h3>
+            <div class="btn-row">
+              <button type="button" id="btn-dma" class="btn">Connect DMA</button>
+              <button type="button" id="btn-reload-radar" class="btn">Reload Radar</button>
+            </div>
+            <p class="status" id="dma-status">Disconnected · demo world</p>
+          </section>
+
+          <section>
+            <h3>Map Control</h3>
+            <div class="btn-row">
+              <button type="button" id="btn-follow" class="btn on">Follow Local</button>
+              <button type="button" id="btn-reload-map" class="btn">Reload Map</button>
+            </div>
+            <p class="hint">Read only · no view-angle or memory writes</p>
+          </section>
+
+          <section>
+            <h3>Visuals</h3>
+            <label class="chk"><input type="checkbox" id="vis-players" checked /> Players</label>
+            <label class="chk"><input type="checkbox" id="vis-teams" checked /> Teams</label>
+            <label class="chk"><input type="checkbox" id="vis-items" checked /> Items</label>
+            <label class="chk"><input type="checkbox" id="vis-animals" checked /> Animals</label>
+            <label class="chk"><input type="checkbox" id="vis-box" checked /> Box ESP</label>
+            <label class="chk"><input type="checkbox" id="vis-bone" checked /> Bone ESP</label>
+            <label class="chk"><input type="checkbox" id="vis-admin" checked /> Admin ESP / flag</label>
+            <label class="chk"><input type="checkbox" id="vis-expl" checked /> Explosions</label>
+            <label class="chk"><input type="checkbox" id="vis-tc" checked /> TCs / Sleeping bags</label>
+            <label class="chk"><input type="checkbox" id="vis-gear" checked /> Enemy belt &amp; gear</label>
+          </section>
+
+          <section>
+            <h3>Fortify</h3>
+            <button type="button" id="btn-fortify" class="btn">Export bases + materials</button>
+          </section>
+        </div>
+      </aside>
+    </div>
+
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-card panel">
+        <div class="panel-head">
+          Settings Menu
+          <button type="button" class="x" id="settings-close">✕</button>
+        </div>
+        <nav class="tabs">
+          <button type="button" data-settab="general" class="tab on">General</button>
+          <button type="button" data-settab="colors" class="tab">Colors</button>
+          <button type="button" data-settab="dropped" class="tab">Dropped Items</button>
+          <button type="button" data-settab="hotkeys" class="tab">Hotkeys</button>
+          <button type="button" data-settab="misc" class="tab">Misc</button>
+        </nav>
+        <div id="settings-body"></div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

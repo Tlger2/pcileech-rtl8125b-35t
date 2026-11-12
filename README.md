@@ -85,6 +85,14 @@ on the MAGIC path without changing the opcode LUT.
   - PCIe Gen2 x1, BAR0 I/O 256 B, BAR2 MEM64 64 KB npref, BAR4 MEM64 16 KB npref
   - MSI 1-vector maskable 64-bit; MSI-X 32 vectors in BAR4
 
+## Read-only radar UI
+
+Atomic-style 2D radar lives in [`radar-web/`](radar-web/). No aimbot, RCS, chams, or other memory writes.
+
+```bash
+cd radar-web && python3 -m http.server 8765
+```
+
 ## Tonight: laptop USB + Vivado machine
 
 The FT601 is the USB3 connector on the CaptainDMA 35T. Stock MemProcFS `fpga://` speaks PCILeech's 0x77 TLP stream; this bitstream speaks MAGIC `0x5AA5C33C` + scrambled opcodes. Use `host/ft601_client.py` (or `host/leechcore_adapter.py`). Do not point MemProcFS `fpga://` at this image.
