@@ -203,8 +203,10 @@ def cmd_ping(client: FT601Client):
 
 
 def cmd_dma_test(client: FT601Client):
-    print("reading 128 bytes from PA=0x0 …")
-    data = read_phys(client, 0x0, 128)
+    # PA 0x0 is not RAM-backed on Win11 (BIOS/reserved) — use 16 MB mark instead
+    _TEST_PA = 0x0100_0000
+    print(f"reading 128 bytes from PA={_TEST_PA:#010x} …")
+    data = read_phys(client, _TEST_PA, 128)
     print(f"got {len(data)} bytes")
     for row in range(0, min(len(data), 128), 16):
         chunk    = data[row:row+16]
