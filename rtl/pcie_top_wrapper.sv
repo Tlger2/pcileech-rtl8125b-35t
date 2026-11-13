@@ -232,6 +232,10 @@ module pcie_top_wrapper (
 
     assign cfg_completer_id = {cfg_bus_number, cfg_device_number, cfg_function_number};
 
+    // BME confirmed set ↔ FSM sitting in IDLE (periodic-recheck idle, not wait-link)
+    logic bme_ok;
+    assign bme_ok = (bme_state == BME_IDLE);
+
     // =========================================================================
     // BME auto-enable state machine
     //
@@ -383,6 +387,7 @@ module pcie_top_wrapper (
         .ft601_wr_n               (ft601_wr_n),
         .ft601_txe_n              (ft601_txe_n),
         .ft601_data               (ft601_data),
-        .ft601_be                 (ft601_be)
+        .ft601_be                 (ft601_be),
+        .bme_ok                   (bme_ok)
     );
 endmodule

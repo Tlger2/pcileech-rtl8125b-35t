@@ -110,6 +110,11 @@ logic [31:0] dw0_q, dw1_q, dw2_q, dw3_q;
 logic        cpl_b0_seen_q;   // beat0 of a CplD was captured
 logic [63:0] cpl_b0_q;        // beat0 data
 
+// ─── Completion timeout ───────────────────────────────────────────────────────
+// 12,500,000 cycles: ~100 ms @ 125 MHz, ~200 ms @ 62.5 MHz
+localparam logic [23:0] CPL_TIMEOUT_CYCLES = 24'd12_500_000;
+logic [23:0] cpl_timeout_q;
+
 // ─── RF read output ───────────────────────────────────────────────────────────
 logic [31:0] rf_rdata_q;
 logic        rf_rvalid_q;
@@ -161,6 +166,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         tx_last_q      <= 1'b0;
         cpl_b0_seen_q  <= 1'b0;
         cpl_b0_q       <= 64'h0;
+        cpl_timeout_q  <= 24'h0;
         rf_rdata_q     <= 32'h0;
         rf_rvalid_q    <= 1'b0;
     end else begin
@@ -241,8 +247,9 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 tx_last_q  <= is_read_q;  // MemRd ends at beat1; MemWr continues
                 if (tx_req_ready) begin
                     if (is_read_q) begin
-                        tx_valid_q <= 1'b0;
-                        state_q    <= ST_WAIT_CPL;
+                        tx_valid_q    <= 1'b0;
+                        cpl_timeout_q <= 24'h0;  // arm timeout on CplD wait entry
+                        state_q       <= ST_WAIT_CPL;
                     end else begin
                         state_q <= ST_TX_PLD;
                     end
@@ -263,8 +270,15 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
             end
 
             ST_WAIT_CPL: begin
-                tx_valid_q <= 1'b0;
-                if (rx_cpl_valid) begin
+                tx_valid_q    <= 1'b0;
+                cpl_timeout_q <= cpl_timeout_q + 24'd1;
+
+                // Completion timeout — STATUS=ERR if no CplD within ~100-200 ms
+                if (cpl_timeout_q == CPL_TIMEOUT_CYCLES) begin
+                    cpl_b0_seen_q <= 1'b0;
+                    status_q      <= 32'h4;  // bit2=ERR (timeout)
+                    state_q       <= ST_DONE;
+                end else if (rx_cpl_valid) begin
                     if (!cpl_b0_seen_q) begin
                         // Beat0: {DW1, DW0} — save and wait for beat1
                         cpl_b0_q      <= rx_cpl_data;

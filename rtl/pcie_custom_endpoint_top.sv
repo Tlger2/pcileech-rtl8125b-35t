@@ -77,7 +77,10 @@ module pcie_custom_endpoint_top (
     output logic        ft601_wr_n,
     input  logic        ft601_txe_n,
     inout  wire  [31:0] ft601_data,
-    inout  wire   [3:0] ft601_be
+    inout  wire   [3:0] ft601_be,
+
+    // BME status from wrapper's auto-enable FSM — holds DMA engine until BME is set
+    input  logic        bme_ok
 );
 
 // =============================================================================
@@ -450,7 +453,7 @@ dma_engine u_dma_engine (
     .rx_cpl_last      (dma_rx_last),
     // Jitter gate
     .dma_cpl_seen     (dma_cpl_seen),
-    .dma_hold_req     (1'b0)
+    .dma_hold_req     (~bme_ok)   // hold DMA engine until BME confirmed by wrapper FSM
 );
 
 // =============================================================================
