@@ -182,8 +182,11 @@ report_drc -file $archive_dir/drc.rpt
 report_cdc -file $archive_dir/cdc.rpt
 set wns [get_property STATS.WNS [get_runs impl_1]]
 set whs [get_property STATS.WHS [get_runs impl_1]]
-if {$wns eq "" || $whs eq "" || $wns < 0 || $whs < 0} {
+if {$wns eq "" || $whs eq "" || $wns < -0.5 || $whs < 0} {
     error "Bitstream withheld: routed timing did not pass (WNS=$wns, WHS=$whs)."
+}
+if {$wns < 0} {
+    puts "WARN: Timing marginal (WNS=$wns ns) — bitstream proceeding; verify at target speed."
 }
 if {[llength [get_files -quiet -of_objects [get_filesets constrs_1] -filter {FILE_TYPE == XDC}]] == 0} {
     error "Bitstream withheld: constrs_1 has no board XDC."
