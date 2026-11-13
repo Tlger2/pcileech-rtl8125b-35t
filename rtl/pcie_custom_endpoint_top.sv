@@ -65,6 +65,8 @@ module pcie_custom_endpoint_top (
     output logic  [7:0] cfg_interrupt_di,
     input  logic        cfg_interrupt_msienable,
     input  logic  [2:0] cfg_interrupt_mmenable,
+    input  logic        cfg_interrupt_msixenable,
+    input  logic        cfg_interrupt_msixfm,
 
     // ---- FT601 USB3 (ft601_clk domain) ----
     input  logic        ft601_clk,
@@ -469,7 +471,7 @@ assign dma_rx_last = m_axis_rx_tlast;
 // DW2[1:0] = PH bits (processing hints), always 0 from real hosts.
 
 logic        bar0_wr_en_q, bar0_rd_en_q;
-logic  [7:0] bar0_byte_addr_q;
+logic [15:0] bar0_byte_addr_q;  // 16-bit to match rtl8125b_bar0_regs.mem_byte_addr
 logic [31:0] bar0_wdata_q;
 
 // Context saved for CplD generation (latched alongside bar0_rd_en_q)

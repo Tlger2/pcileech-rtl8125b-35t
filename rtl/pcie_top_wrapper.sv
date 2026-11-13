@@ -97,6 +97,15 @@ module pcie_top_wrapper (
     //   Link Speed encoding: 0001=Gen1 (2.5 GT/s), 0010=Gen2 (5 GT/s)
     //   Link Width encoding: 000001=x1, 000010=x2 …
     logic [15:0] cfg_lstatus, cfg_dcommand;
+
+    // --- cfg_mgmt interface (BME auto-enable) ---
+    logic        mgmt_rd_en, mgmt_wr_en;
+    logic [31:0] mgmt_wdata;
+    logic [3:0]  mgmt_byte_en;
+    logic [9:0]  mgmt_dwaddr;
+    logic [31:0] mgmt_rdata;        // wired to cfg_mgmt_do
+    logic        mgmt_done;         // wired to cfg_mgmt_rd_wr_done
+    logic [31:0] mgmt_rdata_lat;    // latched cmd register read value
     assign cfg_max_payload_size = cfg_dcommand[7:5];
     assign cfg_max_read_req_size = cfg_dcommand[14:12];
 
@@ -148,14 +157,14 @@ module pcie_top_wrapper (
         .cfg_dcommand                 (cfg_dcommand),
         .cfg_lstatus                  (cfg_lstatus),
 
-        .cfg_mgmt_di              (32'h0),
-        .cfg_mgmt_byte_en         (4'h0),
-        .cfg_mgmt_dwaddr          (10'h0),
-        .cfg_mgmt_wr_en           (1'b0),
-        .cfg_mgmt_rd_en           (1'b0),
+        .cfg_mgmt_di              (mgmt_wdata),
+        .cfg_mgmt_byte_en         (mgmt_byte_en),
+        .cfg_mgmt_dwaddr          (mgmt_dwaddr),
+        .cfg_mgmt_wr_en           (mgmt_wr_en),
+        .cfg_mgmt_rd_en           (mgmt_rd_en),
         .cfg_mgmt_wr_readonly     (1'b0),
-        .cfg_mgmt_do              (),
-        .cfg_mgmt_rd_wr_done      (),
+        .cfg_mgmt_do              (mgmt_rdata),
+        .cfg_mgmt_rd_wr_done      (mgmt_done),
 
         .cfg_interrupt            (cfg_interrupt),
         .cfg_interrupt_rdy        (cfg_interrupt_rdy),
@@ -222,6 +231,113 @@ module pcie_top_wrapper (
     );
 
     assign cfg_completer_id = {cfg_bus_number, cfg_device_number, cfg_function_number};
+
+    // =========================================================================
+    // BME auto-enable state machine
+    //
+    // The Realtek driver (rtcx21) fails Code 10, so Windows never writes
+    // command[2] (Bus Master Enable).  This FSM uses the Xilinx cfg_mgmt
+    // interface to read DW1 (PCI command register), OR in bits[2:0]=0x07
+    // (I/O space + mem space + bus master), and write it back.
+    //
+    // Periodic recheck (~134 ms @ 125 MHz, ~268 ms @ 62.5 MHz) catches any
+    // subsequent host CfgWr that clears BME.
+    // =========================================================================
+    typedef enum logic [2:0] {
+        BME_WAIT_LINK = 3'd0,   // wait for PCIe link
+        BME_RD_ISSUE  = 3'd1,   // issue cfg_mgmt read of DW1
+        BME_RD_WAIT   = 3'd2,   // wait for read done
+        BME_CHECK     = 3'd3,   // inspect BME bit
+        BME_WR_WAIT   = 3'd4,   // wait for write done
+        BME_IDLE      = 3'd5    // BME set; count down to next recheck
+    } bme_state_e;
+
+    bme_state_e  bme_state;
+    logic [23:0] bme_timer;
+    // 16_000_000 cycles: ~128 ms @ 125 MHz, ~256 ms @ 62.5 MHz
+    localparam logic [23:0] BME_RECHECK_CYCLES = 24'd16_000_000;
+
+    // Latch cfg_mgmt_do when the transaction completes (only valid that cycle)
+    always_ff @(posedge user_clk_q) begin
+        if (mgmt_done && bme_state == BME_RD_WAIT)
+            mgmt_rdata_lat <= mgmt_rdata;
+    end
+
+    always_ff @(posedge user_clk_q or posedge user_reset_q) begin
+        if (user_reset_q) begin
+            bme_state    <= BME_WAIT_LINK;
+            bme_timer    <= '0;
+            mgmt_rd_en   <= 1'b0;
+            mgmt_wr_en   <= 1'b0;
+            mgmt_wdata   <= '0;
+            mgmt_byte_en <= 4'b0011;    // write bytes [1:0] — command register
+            mgmt_dwaddr  <= 10'd1;      // DW1 = offset 0x04 = PCI command register
+        end else begin
+            // Default: deassert strobes every cycle
+            mgmt_rd_en <= 1'b0;
+            mgmt_wr_en <= 1'b0;
+
+            case (bme_state)
+                BME_WAIT_LINK: begin
+                    // Hold until link trains up
+                    if (user_lnk_up_q) begin
+                        bme_timer <= 24'd64;    // 64-cycle settle after link-up
+                        bme_state <= BME_RD_ISSUE;
+                    end
+                end
+
+                BME_RD_ISSUE: begin
+                    // Count down settle delay, then pulse read enable
+                    if (bme_timer != '0) begin
+                        bme_timer <= bme_timer - 24'd1;
+                    end else begin
+                        mgmt_rd_en  <= 1'b1;
+                        mgmt_dwaddr <= 10'd1;
+                        bme_state   <= BME_RD_WAIT;
+                    end
+                end
+
+                BME_RD_WAIT: begin
+                    if (mgmt_done) bme_state <= BME_CHECK;
+                end
+
+                BME_CHECK: begin
+                    if (!mgmt_rdata_lat[2]) begin
+                        // BME not set — write command register with BME | mem | I/O
+                        mgmt_wr_en   <= 1'b1;
+                        mgmt_dwaddr  <= 10'd1;
+                        mgmt_wdata   <= mgmt_rdata_lat | 32'h0000_0007;
+                        mgmt_byte_en <= 4'b0011;
+                        bme_state    <= BME_WR_WAIT;
+                    end else begin
+                        // Already set — recheck after interval
+                        bme_timer <= BME_RECHECK_CYCLES;
+                        bme_state <= BME_IDLE;
+                    end
+                end
+
+                BME_WR_WAIT: begin
+                    if (mgmt_done) begin
+                        bme_timer <= BME_RECHECK_CYCLES;
+                        bme_state <= BME_IDLE;
+                    end
+                end
+
+                BME_IDLE: begin
+                    if (!user_lnk_up_q) begin
+                        bme_state <= BME_WAIT_LINK;
+                    end else if (bme_timer != '0) begin
+                        bme_timer <= bme_timer - 24'd1;
+                    end else begin
+                        // Recheck interval expired — re-read command register
+                        bme_state <= BME_RD_ISSUE;
+                    end
+                end
+
+                default: bme_state <= BME_WAIT_LINK;
+            endcase
+        end
+    end
 
     pcie_custom_endpoint_top u_endpoint (
         .user_clk                 (user_clk_q),
