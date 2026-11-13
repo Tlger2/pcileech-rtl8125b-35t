@@ -304,23 +304,38 @@ logic [31:0] rf_raddr;
 logic [31:0] rf_rdata;
 logic        rf_rvalid;
 
-typedef enum logic [1:0] {
-    RF_IDLE      = 2'd0,
-    RF_READ_WAIT = 2'd1
+// Latched read address and data — held across the 4-DW RSP FIFO write sequence.
+logic [31:0] rf_raddr_q;
+logic [31:0] rf_rdata_q;
+
+// Frame constants for read responses.
+// HDR: wire_opc=0x5C (READ), flags=0x00, length_dw=1  → 0x5C00_0001
+localparam logic [31:0] RSP_FRAME_MAGIC = 32'h5AA5_C33C;
+localparam logic [31:0] RSP_FRAME_HDR   = 32'h5C00_0001;
+
+typedef enum logic [2:0] {
+    RF_IDLE      = 3'd0,
+    RF_READ_WAIT = 3'd1,
+    RF_RSP_MAGIC = 3'd2,
+    RF_RSP_HDR   = 3'd3,
+    RF_RSP_ADDR  = 3'd4,
+    RF_RSP_DATA  = 3'd5
 } rf_state_e;
 
 rf_state_e rf_state;
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        rf_state  <= RF_IDLE;
-        rf_we     <= 1'b0;
-        rf_re     <= 1'b0;
-        rf_waddr  <= '0;
-        rf_wdata  <= '0;
-        rf_raddr  <= '0;
-        cmd_rd_en <= 1'b0;
-        rsp_wr_en <= 1'b0;
+        rf_state    <= RF_IDLE;
+        rf_we       <= 1'b0;
+        rf_re       <= 1'b0;
+        rf_waddr    <= '0;
+        rf_wdata    <= '0;
+        rf_raddr    <= '0;
+        rf_raddr_q  <= '0;
+        rf_rdata_q  <= '0;
+        cmd_rd_en   <= 1'b0;
+        rsp_wr_en   <= 1'b0;
         rsp_wr_data <= '0;
     end else begin
         rf_we       <= 1'b0;
@@ -333,24 +348,58 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 if (cmd_rd_valid) begin
                     cmd_rd_en <= 1'b1;   // pop the command
                     if (cmd_rd_data[64]) begin
-                        // Write to DMA register file
+                        // Write to DMA register file — no host response needed
                         rf_we    <= 1'b1;
                         rf_waddr <= cmd_rd_data[63:32];
                         rf_wdata <= cmd_rd_data[31:0];
                         rf_state <= RF_IDLE;
                     end else begin
-                        // Read from DMA register file
-                        rf_re    <= 1'b1;
-                        rf_raddr <= cmd_rd_data[63:32];
-                        rf_state <= RF_READ_WAIT;
+                        // Read from DMA register file — build MAGIC+HDR+ADDR+DATA frame
+                        rf_re      <= 1'b1;
+                        rf_raddr   <= cmd_rd_data[63:32];
+                        rf_raddr_q <= cmd_rd_data[63:32];   // latch for response frame
+                        rf_state   <= RF_READ_WAIT;
                     end
                 end
             end
 
+            // Wait for dma_engine to assert rf_rvalid.
             RF_READ_WAIT: begin
-                if (rf_rvalid && !rsp_wr_full && !rsp_wr_rst_busy) begin
+                if (rf_rvalid) begin
+                    rf_rdata_q <= rf_rdata;   // latch read payload
+                    rf_state   <= RF_RSP_MAGIC;
+                end
+            end
+
+            // Push 4 DWs: MAGIC → HDR → ADDR → DATA
+            RF_RSP_MAGIC: begin
+                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
                     rsp_wr_en   <= 1'b1;
-                    rsp_wr_data <= rf_rdata;
+                    rsp_wr_data <= RSP_FRAME_MAGIC;
+                    rf_state    <= RF_RSP_HDR;
+                end
+            end
+
+            RF_RSP_HDR: begin
+                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
+                    rsp_wr_en   <= 1'b1;
+                    rsp_wr_data <= RSP_FRAME_HDR;
+                    rf_state    <= RF_RSP_ADDR;
+                end
+            end
+
+            RF_RSP_ADDR: begin
+                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
+                    rsp_wr_en   <= 1'b1;
+                    rsp_wr_data <= rf_raddr_q;   // echo the read address
+                    rf_state    <= RF_RSP_DATA;
+                end
+            end
+
+            RF_RSP_DATA: begin
+                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
+                    rsp_wr_en   <= 1'b1;
+                    rsp_wr_data <= rf_rdata_q;   // actual register value
                     rf_state    <= RF_IDLE;
                 end
             end

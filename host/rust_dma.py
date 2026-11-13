@@ -18,14 +18,20 @@ from ft601_client import (
 )
 
 # ── DMA read ──────────────────────────────────────────────────────────────────
-# FPGA DMA engine: max DMA_MAX_DW (32) DWORDs = 128 bytes per transfer.
-# Larger reads are chunked automatically.
+# dma_engine is single-DW per transfer (DMA_MAX_DW = 1, 4 bytes each).
+# Larger reads are chunked: one DMA transaction per DWORD, then offset advances.
 
-_STATUS_POLL_MAX = 2000   # iterations before giving up on a DMA transfer
+_STATUS_POLL_MAX = 2000   # read_dw iterations before giving up on a transfer
+_STATUS_DONE_BIT = 0x2    # dma_engine STATUS[1] = DONE
 
 
 def read_phys(client: FT601Client, addr: int, length: int) -> bytes:
-    """Read `length` bytes from physical address `addr` via DMA register engine."""
+    """Read `length` bytes from physical address `addr` via DMA register engine.
+
+    Issues one DWORD DMA per iteration (dma_engine is single-DW).  Polls
+    STATUS[DONE] (bit 1) rather than any-bit to avoid false breaks on BUSY=1
+    while the TLP is still in flight.
+    """
     if length <= 0:
         return b''
 
@@ -33,27 +39,25 @@ def read_phys(client: FT601Client, addr: int, length: int) -> bytes:
     offset = 0
 
     while offset < length:
-        chunk_bytes = min(length - offset, DMA_MAX_DW * 4)
-        chunk_dw   = (chunk_bytes + 3) // 4
-        pa         = addr + offset
+        chunk_bytes = min(length - offset, DMA_MAX_DW * 4)   # always 4 bytes
+        pa          = addr + offset
 
-        # program address
+        # program physical address and fire one-DW read
         client.write_dw(DMA_ADDR_LO, pa & 0xFFFF_FFFF)
         client.write_dw(DMA_ADDR_HI, (pa >> 32) & 0xFFFF_FFFF)
-        # program length and fire
-        client.write_dw(DMA_LENGTH, chunk_dw)
-        client.write_dw(DMA_CTRL,   DMA_GO_READ)
+        client.write_dw(DMA_LENGTH,  1)          # reserved addr — write harmless
+        client.write_dw(DMA_CTRL,    DMA_GO_READ)
 
-        # poll completion
+        # poll until DONE (bit 1) is set — ignore BUSY-only to avoid early exit
         for _ in range(_STATUS_POLL_MAX):
-            if client.read_dw(DMA_STATUS):
+            if client.read_dw(DMA_STATUS) & _STATUS_DONE_BIT:
                 break
         else:
             raise TimeoutError(f"DMA timeout @ PA {pa:#018x} (offset {offset})")
 
-        # drain RDATA FIFO
-        chunk_data = client.read_burst(DMA_RDATA, chunk_dw)
-        result.extend(bytes(chunk_data)[:chunk_bytes])
+        # read the single completion DWORD
+        dw = client.read_dw(DMA_RDATA)
+        result.extend(struct.pack('<I', dw)[:chunk_bytes])
         offset += chunk_bytes
 
     return bytes(result)

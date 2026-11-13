@@ -31,6 +31,22 @@ except ImportError:  # pragma: no cover
 
 FRAME_MAGIC = 0x5AA5_C33C
 
+# ------------------------------------------------------------------
+# DMA engine register map — must match rtl/dma_engine.sv localparam block.
+# All addresses are 32-bit byte-addressed.
+# ------------------------------------------------------------------
+DMA_CTRL    = 0x0000_0000  # WO: [0]=GO_READ  [1]=GO_WRITE
+DMA_ADDR_LO = 0x0000_0004  # RW: physical address [31:0]
+DMA_ADDR_HI = 0x0000_0008  # RW: physical address [63:32]
+DMA_WDATA   = 0x0000_000C  # RW: data written to memory on GO_WRITE
+DMA_STATUS  = 0x0000_0010  # RO: [0]=BUSY [1]=DONE [2]=ERR
+DMA_RDATA   = 0x0000_0014  # RO: completion data from last GO_READ
+DMA_LENGTH  = 0x0000_0018  # Reserved — dma_engine is single-DW per transfer; write harmless
+
+DMA_GO_READ  = 0x1         # value written to DMA_CTRL to fire a read
+DMA_GO_WRITE = 0x2         # value written to DMA_CTRL to fire a write
+DMA_MAX_DW   = 1           # single DWORD per transfer; read_phys iterates per DW
+
 
 # ------------------------------------------------------------------
 # Opcode LUT — must stay in lock-step with rtl/opcode_scramble_pkg.sv
