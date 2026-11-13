@@ -23,9 +23,13 @@
 //   Beat0: {DW1={CplID,BCM,Status,ByteCount}, DW0}               tkeep=FF  tlast=0
 //   Beat1: {data[31:0], DW2={ReqID,Tag,LowerAddr}}               tkeep=FF  tlast=1
 //
-// CDC protocol over FT601 (2-word frames, 32-bit words):
-//   Write: Word0={1'b1, 15'h0, byte_addr[15:0]}  Word1=wdata[31:0]
-//   Read:  Word0={1'b0, 15'h0, byte_addr[15:0]}  → response pushed to RSP FIFO
+// CDC protocol over FT601 (MAGIC frames, 32-bit words):
+//   DW0 : 32'h5AA5_C33C
+//   DW1 : {wire_opcode[7:0], flags[7:0], length_dw[15:0]}
+//   DW2 : register-file byte address
+//   DW3+: length_dw payload (writes only)
+// ACK opcodes (KEEPALIVE/VERSION/...) reply with a 3-DW MAGIC frame, length 0.
+// Reads reply with MAGIC + HDR + ADDR + payload DWs from the DMA RF.
 
 `timescale 1ns/1ps
 
@@ -53,6 +57,7 @@ module pcie_custom_endpoint_top (
 
     // PCIe config (user_clk)
     input  logic [15:0] cfg_completer_id,
+    input  logic [15:0] cfg_command,
     input  logic  [2:0] cfg_max_payload_size,
     input  logic  [2:0] cfg_max_read_req_size,
     input  logic  [3:0] link_speed_live,
@@ -75,6 +80,7 @@ module pcie_custom_endpoint_top (
     output logic        ft601_oe_n,
     output logic        ft601_rd_n,
     output logic        ft601_wr_n,
+    output logic        ft601_siwu_n,
     input  logic        ft601_txe_n,
     inout  wire  [31:0] ft601_data,
     inout  wire   [3:0] ft601_be
@@ -86,9 +92,12 @@ module pcie_custom_endpoint_top (
 logic user_rst_n;
 assign user_rst_n = ~user_reset;
 
-// Combined async reset for xpm FIFOs (level, needs 2+ cycles of slower clk)
+// XPM wr_clk rst must stay in the ft601_clk domain. OR-ing user_reset
+// (userclk1) into this net is an unsynchronized CDC into the FIFO reset
+// FSM and is what failed setup by 0.37 ns. PCIe reset still clears the
+// user_clk RF adapter; leftover USB words are discarded on FT601 rst.
 logic fifo_arst;
-assign fifo_arst = ~ft601_rst_n | user_reset;
+assign fifo_arst = ~ft601_rst_n;
 
 // =============================================================================
 // Static tie-offs
@@ -115,6 +124,7 @@ ft601_sfifo u_ft601_sfifo (
     .ft601_oe_n   (ft601_oe_n),
     .ft601_rd_n   (ft601_rd_n),
     .ft601_wr_n   (ft601_wr_n),
+    .ft601_siwu_n (ft601_siwu_n),
     .ft601_data   (ft601_data),
     .ft601_be     (ft601_be),
     .fifo_rd_valid(fifo_rd_valid),
@@ -126,66 +136,166 @@ ft601_sfifo u_ft601_sfifo (
     .fifo_wr_be   (fifo_wr_be)
 );
 
-// FT601 always ready to receive host commands
-assign fifo_rd_ready = 1'b1;
-
 // =============================================================================
-// SECTION 2 — FT601 Command Decoder (ft601_clk domain)
+// SECTION 2 — MAGIC parser + packager (ft601_clk domain)
 //
-// 2-word framing:
-//   Word0: [31]=is_write, [15:0]=byte_addr within DMA register file
-//   Word1 (writes only): wdata[31:0]
-//
-// Output to CMD FIFO: 65-bit word = {is_write, addr[31:0], wdata[31:0]}
+// Keepalive/version/info ACKs are entirely in ft601_clk so --ping works even
+// while PCIe user_reset holds the CMD/RSP CDC FIFOs. Register-file reads and
+// writes still cross to user_clk through those FIFOs. PCIe BAR CplD stays on
+// s_axis_tx (section 9); this mux only feeds the FT601 TX FIFO.
 // =============================================================================
 logic        cmd_wr_en;
 logic [64:0] cmd_wr_data;
 logic        cmd_wr_full;
 logic        cmd_wr_rst_busy;
+logic        rsp_rd_valid;
+logic [31:0] rsp_rd_data;
+logic        rsp_rd_en;
 
-typedef enum logic {FT_IDLE = 1'b0, FT_WAIT_DATA = 1'b1} ft_state_e;
-ft_state_e ft_state;
+logic        prs_rf_we, prs_rf_re;
+logic [31:0] prs_rf_waddr, prs_rf_wdata, prs_rf_raddr;
+logic [31:0] prs_rf_rdata;
+logic        prs_rf_rvalid;
+logic        prs_rf_ready;
+logic        prs_accept_frame;
+logic        prs_read_start;
+logic [15:0] prs_read_length;
+logic [7:0]  prs_last_opcode;
+logic [31:0] prs_last_base_addr;
 
-logic        ft_is_write_q;
-logic [31:0] ft_addr_q;
+logic        pkg_rsp_start, pkg_rsp_busy;
+logic [7:0]  pkg_opcode;
+logic [7:0]  pkg_flags;
+logic [31:0] pkg_addr;
+logic [15:0] pkg_length_dw;
+logic        pkg_pld_valid, pkg_pld_ready;
+logic [31:0] pkg_pld_data;
+logic        pkg_fifo_wr_valid, pkg_fifo_wr_ready;
+logic [31:0] pkg_fifo_wr_data;
+
+logic        rd_inflight;
+logic        pld_hold_valid;
+logic        pld_parser_ack;
+logic [31:0] pld_hold;
+logic        read_start_d;
+logic        ack_pending;
+logic [7:0]  ack_opcode;
+logic [15:0] ack_length;
+logic [31:0] ack_addr;
+
+assign prs_accept_frame = !pkg_rsp_busy && !ack_pending && !read_start_d;
+assign prs_rf_ready = !cmd_wr_full && !cmd_wr_rst_busy
+                    && !rd_inflight && !pld_hold_valid;
+
+ft601_cmd_parser u_cmd_parser (
+    .clk           (ft601_clk),
+    .rst_n         (ft601_rst_n),
+    .fifo_rd_valid (fifo_rd_valid),
+    .fifo_rd_ready (fifo_rd_ready),
+    .fifo_rd_data  (fifo_rd_data),
+    .accept_frame  (prs_accept_frame),
+    .rf_ready      (prs_rf_ready),
+    .rf_we         (prs_rf_we),
+    .rf_waddr      (prs_rf_waddr),
+    .rf_wdata      (prs_rf_wdata),
+    .rf_re         (prs_rf_re),
+    .rf_raddr      (prs_rf_raddr),
+    .rf_rdata      (prs_rf_rdata),
+    .rf_rvalid     (prs_rf_rvalid),
+    .frame_start   (),
+    .read_start    (prs_read_start),
+    .read_length   (prs_read_length),
+    .frame_done    (),
+    .bad_opcode_err(),
+    .last_opcode   (prs_last_opcode),
+    .last_base_addr(prs_last_base_addr)
+);
+
+ft601_resp_packager u_resp_packager (
+    .clk             (ft601_clk),
+    .rst_n           (ft601_rst_n),
+    .rsp_start       (pkg_rsp_start),
+    .rsp_opcode_canon(pkg_opcode),
+    .rsp_flags       (pkg_flags),
+    .rsp_addr        (pkg_addr),
+    .rsp_length_dw   (pkg_length_dw),
+    .rsp_busy        (pkg_rsp_busy),
+    .rsp_done        (),
+    .pld_valid       (pkg_pld_valid),
+    .pld_ready       (pkg_pld_ready),
+    .pld_data        (pkg_pld_data),
+    .fifo_wr_valid   (pkg_fifo_wr_valid),
+    .fifo_wr_ready   (pkg_fifo_wr_ready),
+    .fifo_wr_data    (pkg_fifo_wr_data),
+    .fifo_wr_last    (),
+    .bad_opcode_err  ()
+);
+
+// CMD CDC push: parser RF ops are in ft601_clk; dma_engine is in user_clk.
+assign cmd_wr_en = !cmd_wr_full && !cmd_wr_rst_busy && (
+    prs_rf_we || (prs_rf_re && !rd_inflight && !pld_hold_valid)
+);
+assign cmd_wr_data = prs_rf_we
+    ? {1'b1, prs_rf_waddr, prs_rf_wdata}
+    : {1'b0, prs_rf_raddr, 32'h0};
+
+assign prs_rf_rdata  = pld_hold;
+assign prs_rf_rvalid = pld_hold_valid && !pld_parser_ack;
+assign pkg_pld_valid = pld_hold_valid;
+assign pkg_pld_data  = pld_hold;
+assign pkg_flags     = 8'h00;
 
 always_ff @(posedge ft601_clk or negedge ft601_rst_n) begin
     if (!ft601_rst_n) begin
-        ft_state     <= FT_IDLE;
-        ft_is_write_q <= 1'b0;
-        ft_addr_q    <= '0;
-        cmd_wr_en    <= 1'b0;
-        cmd_wr_data  <= '0;
+        rd_inflight    <= 1'b0;
+        pld_hold_valid <= 1'b0;
+        pld_parser_ack <= 1'b0;
+        pld_hold       <= '0;
+        read_start_d   <= 1'b0;
+        ack_pending    <= 1'b0;
+        ack_opcode     <= '0;
+        ack_length     <= '0;
+        ack_addr       <= '0;
+        pkg_rsp_start  <= 1'b0;
+        pkg_opcode     <= '0;
+        pkg_addr       <= '0;
+        pkg_length_dw  <= '0;
     end else begin
-        cmd_wr_en <= 1'b0;
+        pkg_rsp_start <= 1'b0;
+        read_start_d  <= prs_read_start;
 
-        case (ft_state)
-            FT_IDLE: begin
-                if (fifo_rd_valid && !cmd_wr_full && !cmd_wr_rst_busy) begin
-                    ft_is_write_q <= fifo_rd_data[31];
-                    ft_addr_q     <= {16'h0, fifo_rd_data[15:0]};
-                    if (fifo_rd_data[31]) begin
-                        // Write: need data word next
-                        ft_state  <= FT_WAIT_DATA;
-                    end else begin
-                        // Read: push immediately (wdata unused)
-                        cmd_wr_en   <= 1'b1;
-                        cmd_wr_data <= {1'b0, {16'h0, fifo_rd_data[15:0]}, 32'h0};
-                        ft_state    <= FT_IDLE;
-                    end
-                end
-            end
+        if (prs_read_start) begin
+            ack_opcode <= prs_last_opcode;
+            ack_length <= prs_read_length;
+        end
 
-            FT_WAIT_DATA: begin
-                if (fifo_rd_valid && !cmd_wr_full && !cmd_wr_rst_busy) begin
-                    cmd_wr_en   <= 1'b1;
-                    cmd_wr_data <= {1'b1, ft_addr_q, fifo_rd_data};
-                    ft_state    <= FT_IDLE;
-                end
-            end
+        if (read_start_d) begin
+            ack_pending <= 1'b1;
+            ack_addr    <= prs_last_base_addr;
+        end
 
-            default: ft_state <= FT_IDLE;
-        endcase
+        if ((ack_pending || read_start_d) && !pkg_rsp_busy && !pkg_rsp_start) begin
+            pkg_rsp_start <= 1'b1;
+            pkg_opcode    <= ack_opcode;
+            pkg_addr      <= read_start_d ? prs_last_base_addr : ack_addr;
+            pkg_length_dw <= ack_length;
+            ack_pending   <= 1'b0;
+        end
+
+        if (cmd_wr_en && prs_rf_re && !prs_rf_we)
+            rd_inflight <= 1'b1;
+
+        if (rd_inflight && rsp_rd_valid && !pld_hold_valid) begin
+            pld_hold       <= rsp_rd_data;
+            pld_hold_valid <= 1'b1;
+            pld_parser_ack <= 1'b0;
+            rd_inflight    <= 1'b0;
+        end else if (pld_hold_valid && pkg_pld_ready) begin
+            pld_hold_valid <= 1'b0;
+            pld_parser_ack <= 1'b0;
+        end else if (pld_hold_valid && !pld_parser_ack) begin
+            pld_parser_ack <= 1'b1;
+        end
     end
 end
 
@@ -243,9 +353,7 @@ logic        rsp_wr_en;
 logic [31:0] rsp_wr_data;
 logic        rsp_wr_full;
 logic        rsp_wr_rst_busy;
-logic [31:0] rsp_rd_data;
 logic        rsp_rd_empty;
-logic        rsp_rd_en;
 logic        rsp_rd_rst_busy;
 
 xpm_fifo_async #(
@@ -285,13 +393,16 @@ xpm_fifo_async #(
     .dbiterr      ()
 );
 
-wire rsp_rd_valid = ~rsp_rd_empty & ~rsp_rd_rst_busy;
+assign rsp_rd_valid = ~rsp_rd_empty & ~rsp_rd_rst_busy;
+assign rsp_rd_en    = rd_inflight & rsp_rd_valid & ~pld_hold_valid;
 
-// RSP FIFO consumer (ft601_clk): push read responses back to host
-assign rsp_rd_en    = rsp_rd_valid & fifo_wr_ready;
-assign fifo_wr_valid = rsp_rd_valid;
-assign fifo_wr_data  = rsp_rd_data;
-assign fifo_wr_be    = 4'hF;
+// Only solicited packager responses may drive USB TX. The old debug
+// heartbeat used per-word priority and could splice a KEEPALIVE into a
+// response, besides making a ping pass without a command being received.
+assign fifo_wr_valid     = pkg_fifo_wr_valid;
+assign fifo_wr_data      = pkg_fifo_wr_data;
+assign fifo_wr_be        = 4'hF;
+assign pkg_fifo_wr_ready = fifo_wr_ready;
 
 // =============================================================================
 // SECTION 4 — DMA Engine register file adapter (user_clk domain)
@@ -304,38 +415,23 @@ logic [31:0] rf_raddr;
 logic [31:0] rf_rdata;
 logic        rf_rvalid;
 
-// Latched read address and data — held across the 4-DW RSP FIFO write sequence.
-logic [31:0] rf_raddr_q;
-logic [31:0] rf_rdata_q;
-
-// Frame constants for read responses.
-// HDR: wire_opc=0x5C (READ), flags=0x00, length_dw=1  → 0x5C00_0001
-localparam logic [31:0] RSP_FRAME_MAGIC = 32'h5AA5_C33C;
-localparam logic [31:0] RSP_FRAME_HDR   = 32'h5C00_0001;
-
-typedef enum logic [2:0] {
-    RF_IDLE      = 3'd0,
-    RF_READ_WAIT = 3'd1,
-    RF_RSP_MAGIC = 3'd2,
-    RF_RSP_HDR   = 3'd3,
-    RF_RSP_ADDR  = 3'd4,
-    RF_RSP_DATA  = 3'd5
+typedef enum logic [1:0] {
+    RF_IDLE      = 2'd0,
+    RF_READ_WAIT = 2'd1
 } rf_state_e;
 
 rf_state_e rf_state;
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        rf_state    <= RF_IDLE;
-        rf_we       <= 1'b0;
-        rf_re       <= 1'b0;
-        rf_waddr    <= '0;
-        rf_wdata    <= '0;
-        rf_raddr    <= '0;
-        rf_raddr_q  <= '0;
-        rf_rdata_q  <= '0;
-        cmd_rd_en   <= 1'b0;
-        rsp_wr_en   <= 1'b0;
+        rf_state  <= RF_IDLE;
+        rf_we     <= 1'b0;
+        rf_re     <= 1'b0;
+        rf_waddr  <= '0;
+        rf_wdata  <= '0;
+        rf_raddr  <= '0;
+        cmd_rd_en <= 1'b0;
+        rsp_wr_en <= 1'b0;
         rsp_wr_data <= '0;
     end else begin
         rf_we       <= 1'b0;
@@ -348,58 +444,24 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 if (cmd_rd_valid) begin
                     cmd_rd_en <= 1'b1;   // pop the command
                     if (cmd_rd_data[64]) begin
-                        // Write to DMA register file — no host response needed
+                        // Write to DMA register file
                         rf_we    <= 1'b1;
                         rf_waddr <= cmd_rd_data[63:32];
                         rf_wdata <= cmd_rd_data[31:0];
                         rf_state <= RF_IDLE;
                     end else begin
-                        // Read from DMA register file — build MAGIC+HDR+ADDR+DATA frame
-                        rf_re      <= 1'b1;
-                        rf_raddr   <= cmd_rd_data[63:32];
-                        rf_raddr_q <= cmd_rd_data[63:32];   // latch for response frame
-                        rf_state   <= RF_READ_WAIT;
+                        // Read from DMA register file
+                        rf_re    <= 1'b1;
+                        rf_raddr <= cmd_rd_data[63:32];
+                        rf_state <= RF_READ_WAIT;
                     end
                 end
             end
 
-            // Wait for dma_engine to assert rf_rvalid.
             RF_READ_WAIT: begin
-                if (rf_rvalid) begin
-                    rf_rdata_q <= rf_rdata;   // latch read payload
-                    rf_state   <= RF_RSP_MAGIC;
-                end
-            end
-
-            // Push 4 DWs: MAGIC → HDR → ADDR → DATA
-            RF_RSP_MAGIC: begin
-                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
+                if (rf_rvalid && !rsp_wr_full && !rsp_wr_rst_busy) begin
                     rsp_wr_en   <= 1'b1;
-                    rsp_wr_data <= RSP_FRAME_MAGIC;
-                    rf_state    <= RF_RSP_HDR;
-                end
-            end
-
-            RF_RSP_HDR: begin
-                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
-                    rsp_wr_en   <= 1'b1;
-                    rsp_wr_data <= RSP_FRAME_HDR;
-                    rf_state    <= RF_RSP_ADDR;
-                end
-            end
-
-            RF_RSP_ADDR: begin
-                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
-                    rsp_wr_en   <= 1'b1;
-                    rsp_wr_data <= rf_raddr_q;   // echo the read address
-                    rf_state    <= RF_RSP_DATA;
-                end
-            end
-
-            RF_RSP_DATA: begin
-                if (!rsp_wr_full && !rsp_wr_rst_busy) begin
-                    rsp_wr_en   <= 1'b1;
-                    rsp_wr_data <= rf_rdata_q;   // actual register value
+                    rsp_wr_data <= rf_rdata;
                     rf_state    <= RF_IDLE;
                 end
             end
@@ -422,6 +484,11 @@ logic [63:0] dma_rx_data;
 logic  [7:0] dma_rx_keep;
 logic        dma_rx_last;
 logic        dma_cpl_seen;
+logic [31:0] debug_rx_header;
+// BME gating: PCIe Command register bit[2] = Bus Master Enable.
+// Host OS writes this after assigning the BAR; hold DMA TLPs until set.
+logic bme_ok;
+assign bme_ok = cfg_command[2];
 
 dma_engine u_dma_engine (
     .user_clk         (user_clk),
@@ -436,6 +503,10 @@ dma_engine u_dma_engine (
     .rf_rvalid        (rf_rvalid),
     // PCIe requester ID
     .cfg_completer_id (cfg_completer_id),
+    .cfg_command (cfg_command),
+    .debug_link_up (user_lnk_up),
+    .debug_rx_header (debug_rx_header),
+    .cfg_max_payload_size(cfg_max_payload_size),
     // AXI-Stream TX → PCIe core
     .tx_req_valid     (dma_tx_valid),
     .tx_req_ready     (dma_tx_ready),
@@ -450,7 +521,7 @@ dma_engine u_dma_engine (
     .rx_cpl_last      (dma_rx_last),
     // Jitter gate
     .dma_cpl_seen     (dma_cpl_seen),
-    .dma_hold_req     (1'b0)
+    .dma_hold_req     (~bme_ok)
 );
 
 // =============================================================================
@@ -467,8 +538,15 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) rx_beat_cnt <= 2'd0;
     else if (m_axis_rx_tvalid) begin
         if (m_axis_rx_tlast) rx_beat_cnt <= 2'd0;
-        else                 rx_beat_cnt <= rx_beat_cnt + 1'b1;
+        else if (rx_beat_cnt != 2'd3) rx_beat_cnt <= rx_beat_cnt + 1'b1;
     end
+end
+
+// Record all received packet headers for read-only diagnostics.
+always_ff @(posedge user_clk or negedge user_rst_n) begin
+    if (!user_rst_n) debug_rx_header <= 0;
+    else if (m_axis_rx_tvalid && rx_beat_cnt == 0)
+        debug_rx_header <= m_axis_rx_tdata[31:0];
 end
 
 // TLP type encoding

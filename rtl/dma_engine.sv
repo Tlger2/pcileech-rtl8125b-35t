@@ -31,6 +31,9 @@ module dma_engine #(
     output logic        rf_rvalid,
 
     input  logic [15:0] cfg_completer_id,
+    input  logic [15:0] cfg_command,
+    input  logic debug_link_up,
+    input  logic [31:0] debug_rx_header,
     input  logic [2:0]  cfg_max_payload_size,
 
     output logic        tx_req_valid,
@@ -84,7 +87,20 @@ logic        cpl_hdr0_q;
 logic        cpl_need_dw2_q;    // next beat is {data0, DW2} of this CplD
 logic  [9:0] cpl_got_q;
 logic  [9:0] cpl_need_q;
+// Completion timeout: 12,500,000 cycles ≈ 100 ms @ 125 MHz, 200 ms @ 62.5 MHz.
+localparam logic [23:0] CPL_TIMEOUT_CYCLES = 24'd12_500_000;
+logic [23:0] cpl_timeout_q;
 
+logic [31:0] debug_tx_beats, debug_cpl_beats;
+always_ff @(posedge user_clk or negedge user_rst_n) begin
+    if (!user_rst_n) begin
+        debug_tx_beats <= 0;
+        debug_cpl_beats <= 0;
+    end else begin
+        if (tx_req_valid && tx_req_ready) debug_tx_beats <= debug_tx_beats + 1;
+        if (rx_cpl_valid) debug_cpl_beats <= debug_cpl_beats + 1;
+    end
+end
 logic [31:0] rf_rdata_q;
 logic        rf_rvalid_q;
 assign rf_rdata  = rf_rdata_q;
@@ -163,6 +179,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         cpl_need_dw2_q <= 1'b0;
         cpl_got_q      <= '0;
         cpl_need_q     <= '0;
+        cpl_timeout_q  <= 24'h0;
         pld_idx_q      <= '0;
         rf_rdata_q     <= 32'h0;
         rf_rvalid_q    <= 1'b0;
@@ -225,6 +242,11 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 WDATA_ADDR:   rf_rdata_q <= wdata_q;
                 STATUS_ADDR:  rf_rdata_q <= status_q;
                 RDATA_ADDR:   rf_rdata_q <= rdata_q;
+                32'h20: rf_rdata_q <= {cfg_completer_id, cfg_command};
+                32'h24: rf_rdata_q <= {26'b0,state_q,tx_req_ready,tx_req_valid,debug_link_up};
+                32'h28: rf_rdata_q <= debug_tx_beats;
+                32'h2c: rf_rdata_q <= debug_cpl_beats;
+                32'h30: rf_rdata_q <= debug_rx_header;
                 LENGTH_ADDR:  rf_rdata_q <= {22'h0, length_q};
                 default:      rf_rdata_q <= 32'hDEAD_BEEF;
             endcase
@@ -255,6 +277,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                         cpl_need_dw2_q <= 1'b0;
                         cpl_got_q      <= 10'd0;
                         cpl_need_q     <= xfer_len_q;
+                        cpl_timeout_q  <= 24'h0;  // arm completion timeout
                         state_q        <= ST_WAIT_CPL;
                     end else begin
                         if (xfer_len_q <= 10'd1) begin
@@ -297,8 +320,15 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
             end
 
             ST_WAIT_CPL: begin
-                tx_valid_q <= 1'b0;
-                if (rx_cpl_valid) begin
+                tx_valid_q    <= 1'b0;
+                cpl_timeout_q <= cpl_timeout_q + 24'd1;
+                if (cpl_timeout_q == CPL_TIMEOUT_CYCLES) begin
+                    // No completion in ~100-200 ms: flag ERR and unblock host.
+                    cpl_hdr0_q     <= 1'b0;
+                    cpl_need_dw2_q <= 1'b0;
+                    status_q       <= 32'h4;  // bit2=ERR (timeout)
+                    state_q        <= ST_DONE;
+                end else if (rx_cpl_valid) begin
                     if (!cpl_hdr0_q) begin
                         // Beat 0 of each CplD: {DW1, DW0}. Completions may split.
                         cpl_hdr0_q     <= 1'b1;
