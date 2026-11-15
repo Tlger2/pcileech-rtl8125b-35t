@@ -26,6 +26,11 @@ __pycache__/
 venv/
 *.egg-info/
 
+## Web
+node_modules/
+dist/
+radar-web/
+
 ## Sim
 *.vcd
 *.wdb
