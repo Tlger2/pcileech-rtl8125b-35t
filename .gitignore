@@ -34,6 +34,12 @@ xvlog.log
 xelab.log
 xsim.log
 
+## Web radar
+node_modules/
+dist/
+radar-web/node_modules/
+radar-web/dist/
+
 ## Editor / OS
 .vscode/
 .idea/

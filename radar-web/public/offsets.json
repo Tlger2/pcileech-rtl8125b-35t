@@ -1,0 +1,31 @@
+{
+  "game": "Rust",
+  "process": "RustClient.exe",
+  "assembly": "GameAssembly.dll",
+  "notes": "Edit these after rust_probe.py / dump_fields.json. Snapshot ingest uses ReaderRadar JSON and does not need every field.",
+  "entity_list": {
+    "clientEntities": null,
+    "list_field_offset": "0x18",
+    "list_count_offset": "0x20"
+  },
+  "BaseCombatEntity": {
+    "startHealth": "0x258",
+    "lifestate": "0x2C0",
+    "health": "0x218"
+  },
+  "BasePlayer": {
+    "flags": "0x1C4",
+    "display_name": "0x370",
+    "held_entity": "0x458"
+  },
+  "PlayerFlags": {
+    "Sleeping": 1,
+    "Wounded": 2,
+    "IsAdmin": 4
+  },
+  "BaseProjectile": {
+    "primaryMagazine": "0x3F8",
+    "reloadTime": "0x3F0",
+    "automatic": "0x3B0"
+  }
+}

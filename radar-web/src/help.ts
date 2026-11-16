@@ -1,0 +1,4 @@
+export const HELP: Record<string, string> = {
+  dma: "Set DMA source (default http://127.0.0.1:1738/state, saved in this browser). Connect DMA pulls ReaderRadar snapshot JSON from that URL. If the bridge is down, the live SIM world stays. Disconnect drops back to SIM. Reload Radar reseeds or re-pulls entities. The radar is read-only — it never writes game memory.",
+  map: "Reload Map rebuilds the satellite-style island (teal ocean, forest canopy, dirt roads, ice-cap snow) from the current seed and auto-formats like opening the G-map (center on you, ~750m view). If the DMA bridge serves GET /map, that Facepunch raster replaces the procedural basemap. The view follows the local player; drag to pan (detaches follow), wheel to zoom, F to refocus. Join / first spawn / Reload Map snap the G-map framing once.",
+};
