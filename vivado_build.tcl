@@ -294,14 +294,18 @@ foreach name {synth_1 impl_1 pcie_7x_0_synth_1} {
         file copy $log [file join $archive_dir ${name}_[file tail $log]]
     }
 }
-proc poll_run {name timeout_s} {
+proc poll_run {name timeout_s {step ""}} {
     set t0 [clock seconds]
     while {1} {
         set st [get_property STATUS [get_runs $name]]
         set pr [get_property PROGRESS [get_runs $name]]
         puts "POLL $name progress=$pr status=$st"
-        if {[string match "*Complete*" $st] ||
-            [string match "*cached IP*" $st]} {
+        if {$step ne ""} {
+            if {[string match "${step} Complete*" $st]} {
+                return 1
+            }
+        } elseif {[string match "*Complete*" $st] ||
+                  [string match "*cached IP*" $st]} {
             return 1
         }
         if {[string match "*Fail*" $st] || [string match "*Error*" $st]} {
@@ -320,12 +324,13 @@ proc run_step {name step} {
     # wait_on_run has hung after synth on this host; poll STATUS instead.
     set timeout_s 3600
     if {$name eq "synth_1"} { set timeout_s 1800 }
-    if {![poll_run $name $timeout_s]} {
+    if {![poll_run $name $timeout_s $step]} {
         error "$name failed at $step: [get_property STATUS [get_runs $name]]. See [get_property DIRECTORY [get_runs $name]]/runme.log"
     }
     set status [get_property STATUS [get_runs $name]]
     puts "INFO: $name status: $status"
-    if {![string match "*Complete*" $status]} {
+    if {![string match "${step} Complete*" $status] &&
+        !($step eq "" && [string match "*cached IP*" $status])} {
         error "$name failed at $step: $status. See [get_property DIRECTORY [get_runs $name]]/runme.log"
     }
 }
@@ -377,10 +382,12 @@ if {$wns eq "" || $whs eq "" || $wns < 0 || $whs < 0} {
 if {[llength [get_files -quiet -of_objects [get_filesets constrs_1] -filter {FILE_TYPE == XDC}]] == 0} {
     error "Bitstream withheld: constrs_1 has no board XDC."
 }
-close_design
-run_step impl_1 write_bitstream
+# Write the bitstream from the open routed design. launch_runs write_bitstream
+# is easy to miss: poll_run can see "route_design Complete!" and return early.
 set bit_path [file join [get_property DIRECTORY [get_runs impl_1]] pcie_top_wrapper.bit]
 set bin_path [file join [get_property DIRECTORY [get_runs impl_1]] pcie_top_wrapper.bin]
+puts "INFO: WNS=$wns WHS=$whs — writing $bit_path"
+write_bitstream -force $bit_path
 puts "INFO: Bitstream: $bit_path"
 
 # Generate SPI-flashable .bin image (SPIx4). CaptainDMA 35T flash is ISSI
