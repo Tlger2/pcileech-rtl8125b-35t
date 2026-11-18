@@ -115,6 +115,10 @@ module rtl8125b_bar0_regs
     logic [31:0] tally_lo_q, tally_hi_q, thpds_lo_q, thpds_hi_q;
     logic [31:0] flash_q, timerint_q, rxmissed_q;
     logic [31:0] funcevent_q, funceventmask_q, funcpreset_q, funcforce_q;
+    logic [15:0] int_cfg1_q;
+    logic [15:0] ocp_addr_q;
+    logic [11:0] eri_addr_q;
+    logic [11:0] gphy_addr_q;
 
     logic [31:0] link_timer_q;
     logic        link_up_q;
@@ -158,6 +162,7 @@ module rtl8125b_bar0_regs
         (byte_off >= OFF_CSIDR && byte_off <= OFF_CSIAR+3) ||
         (byte_off >= OFF_PHYSTATUS && byte_off <= OFF_PMCH) ||
         (byte_off >= OFF_ERIDR && byte_off <= OFF_ERIAR+3) ||
+        (byte_off >= 8'h78 && byte_off <= 8'h7B) ||
         (byte_off >= OFF_EPHYAR && byte_off <= OFF_EPHYAR+3) ||
         (byte_off >= OFF_OCPDR && byte_off <= OFF_OCPAR+3) ||
         (byte_off >= OFF_GPHY_OCP && byte_off <= OFF_GPHY_OCP+3) ||
@@ -188,6 +193,42 @@ module rtl8125b_bar0_regs
     );
         pack4 = {b3, b2, b1, b0};
     endfunction
+
+    // CSI is a MMIO window into PCI config. Seed Type-0 header DWs so a
+    // r8169/r8125/rtcx21 CSI probe of VID/DID/rev/SSID is not 0.
+    function automatic logic [31:0] csi_cfg_dw(input logic [5:0] idx);
+        unique case (idx)
+            6'd0:  csi_cfg_dw = {DEVICE_ID, VENDOR_ID};
+            6'd1:  csi_cfg_dw = 32'h0010_0000;  // Status CapsList, Command 0
+            6'd2:  csi_cfg_dw = {CLASS_CODE, REVISION_ID};
+            6'd11: csi_cfg_dw = {SUBSYS_ID, SUBSYS_VENDOR_ID};
+            6'd13: csi_cfg_dw = {24'h0, CAP_PTR};
+            default: csi_cfg_dw = 32'h0;
+        endcase
+    endfunction
+
+    function automatic logic [15:0] ocp_rom(input logic [15:0] addr);
+        unique case (addr)
+            16'hC0B4: ocp_rom = 16'h0000;
+            16'hC0B8: ocp_rom = 16'h0000;
+            16'hE860: ocp_rom = 16'h0040;  // EEE
+            16'hE8DE: ocp_rom = 16'h20E6;
+            16'hE0D4: ocp_rom = 16'h0000;
+            16'hC0A0: ocp_rom = 16'h0000;
+            16'hE614: ocp_rom = 16'h0400;
+            default:  ocp_rom = 16'h0;
+        endcase
+    endfunction
+
+    function automatic logic [31:0] eri_rom(input logic [11:0] addr);
+        unique case (addr[11:2])
+            10'h032: eri_rom = 32'h0008_0002;  // 0xC8 EXGMAC
+            10'h035: eri_rom = 32'h0000_0000;  // 0xD4
+            10'h074: eri_rom = 32'h0000_0000;  // 0x1D0
+            default: eri_rom = 32'h0;
+        endcase
+    endfunction
+
 
     logic [31:0] named_rdata;
     logic        named_hit;
@@ -303,6 +344,10 @@ module rtl8125b_bar0_regs
             14'h01D: begin  // 0x74 ERIAR
                 named_hit   = 1'b1;
                 named_rdata = eriar_q;
+            end
+            14'h01E: begin  // 0x78: INT_CFG1_8125 at 0x7A
+                named_hit   = 1'b1;
+                named_rdata = {int_cfg1_q, 16'h0};
             end
             14'h020: begin  // 0x80 EPHYAR
                 named_hit   = 1'b1;
@@ -433,7 +478,11 @@ module rtl8125b_bar0_regs
             mtps_q         <= 32'h0000_000C;
             macdbg_q       <= 8'h00;
             gpio_q         <= 8'h00;
-            pmch_q         <= 8'h00;
+            pmch_q         <= 8'hC0;  // donor-plausible PMCH (PME/D3cold)
+            int_cfg1_q     <= 16'h0;
+            ocp_addr_q     <= 16'h0;
+            eri_addr_q     <= 12'h0;
+            gphy_addr_q    <= 12'h0;
             eri_timer_q    <= '0;
             ephy_timer_q   <= '0;
             ocp_timer_q    <= '0;
@@ -456,7 +505,7 @@ module rtl8125b_bar0_regs
             gphy_ocp_reg_q <= '0;
             for (int e = 0; e < 64; e++) begin
                 eri_mem[e] <= 32'h0;
-                csi_mem[e] <= 32'h0;
+                csi_mem[e] <= csi_cfg_dw(e[5:0]);
                 ocp_mem[e] <= 16'h0;
             end
             for (int ep = 0; ep < 32; ep++) begin
@@ -506,7 +555,9 @@ module rtl8125b_bar0_regs
                         eri_mem[eri_idx_q] <= eridr_q;
                         eriar_q[31]        <= 1'b0;
                     end else begin
-                        eridr_q            <= eri_mem[eri_idx_q];
+                        eridr_q            <= (eri_mem[eri_idx_q] != 32'h0)
+                                            ? eri_mem[eri_idx_q]
+                                            : eri_rom(eri_addr_q);
                         eriar_q[31]        <= 1'b1;
                     end
                 end
@@ -534,7 +585,9 @@ module rtl8125b_bar0_regs
                         ocp_mem[ocp_idx_q] <= ocpdr_q[15:0];
                         ocpar_q[31]        <= 1'b0;
                     end else begin
-                        ocpdr_q[15:0]      <= ocp_mem[ocp_idx_q];
+                        ocpdr_q[15:0]      <= (ocp_mem[ocp_idx_q] != 16'h0)
+                                            ? ocp_mem[ocp_idx_q]
+                                            : ocp_rom(ocp_addr_q);
                         ocpar_q[31]        <= 1'b1;
                     end
                 end
@@ -560,10 +613,18 @@ module rtl8125b_bar0_regs
                     gphy_ocp_pending_q <= 1'b0;
                     if (gphy_ocp_is_write_q) begin
                         gphy_ocp_mem[gphy_ocp_reg_q] <= gphy_ocp_q[15:0];
+                        if (gphy_addr_q == 12'hA40) phy_regs[0] <= gphy_ocp_q[15:0];
+                        if (gphy_addr_q == 12'hA42) phy_regs[1] <= gphy_ocp_q[15:0];
                         gphy_ocp_q[31]               <= 1'b0;
                     end else begin
-                        gphy_ocp_q[15:0]             <= gphy_ocp_mem[gphy_ocp_reg_q];
-                        gphy_ocp_q[31]               <= 1'b1;
+                        unique case (gphy_addr_q)
+                            12'hA40: gphy_ocp_q[15:0] <= phy_regs[0];
+                            12'hA42: gphy_ocp_q[15:0] <= phy_regs[1];
+                            12'hA44: gphy_ocp_q[15:0] <= phy_regs[2];
+                            12'hA46: gphy_ocp_q[15:0] <= phy_regs[3];
+                            default: gphy_ocp_q[15:0] <= gphy_ocp_mem[gphy_ocp_reg_q];
+                        endcase
+                        gphy_ocp_q[31] <= 1'b1;
                     end
                 end
             end
@@ -767,8 +828,13 @@ module rtl8125b_bar0_regs
                             eri_timer_q    <= 5'd12;
                             eri_is_write_q <= mem_wdata[31];
                             eri_idx_q      <= mem_wdata[9:4];
+                            eri_addr_q     <= mem_wdata[11:0];
                             eriar_q[31]    <= mem_wdata[31];
                         end
+                    end
+                    14'h01E: begin  // INT_CFG1_8125 at 0x7A
+                        if (mem_be[2]) int_cfg1_q[7:0]  <= mem_wdata[23:16];
+                        if (mem_be[3]) int_cfg1_q[15:8] <= mem_wdata[31:24];
                     end
                     14'h020: begin  // EPHYAR
                         if (mem_be[0]) ephyar_q[7:0]   <= mem_wdata[7:0];
@@ -799,6 +865,7 @@ module rtl8125b_bar0_regs
                             ocp_timer_q    <= 5'd12;
                             ocp_is_write_q <= mem_wdata[31];
                             ocp_idx_q      <= mem_wdata[7:2];
+                            ocp_addr_q     <= mem_wdata[15:0];
                             ocpar_q[31]    <= mem_wdata[31];
                         end
                     end
@@ -812,6 +879,7 @@ module rtl8125b_bar0_regs
                             gphy_ocp_timer_q    <= 5'd12;
                             gphy_ocp_is_write_q <= mem_wdata[31];
                             gphy_ocp_reg_q      <= mem_wdata[20:16];
+                            gphy_addr_q         <= mem_wdata[27:16];
                             gphy_ocp_q[31]      <= mem_wdata[31];
                         end
                     end

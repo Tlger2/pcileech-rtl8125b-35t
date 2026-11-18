@@ -700,6 +700,12 @@ module tb_endpoint;
             bar_rd = 0;
             @(posedge clk);
             `CHECK(bar_rdata[31] == 1'b1, "F.6 CSIAR Flag set on read complete")
+            bar_rd = 1; bar_addr = 16'h64;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK(bar_rdata == {DEVICE_ID, VENDOR_ID},
+                   "F.6 CSIDR DW0 = DID|VID from identity pkg")
             // GPHY_OCP Flag protocol (stub, not a full GPHY)
             bar_wr = 1; bar_addr = 16'hB8; bar_wdata = 32'h0000_0000; bar_be = 4'hF;
             @(posedge clk);
@@ -710,6 +716,11 @@ module tb_endpoint;
             bar_rd = 0;
             @(posedge clk);
             `CHECK(bar_rdata[31] == 1'b1, "F.7 GPHY_OCP Flag set on read complete")
+            // MSI-X table/PBA/BIR match donor (32 vec, BAR4, PBA 0x800)
+            `CHECK(MSIX_VECTORS == 32, "F.8 MSI-X 32 vectors")
+            `CHECK(MSIX_TABLE_BIR == 3'd4, "F.8 MSI-X table BIR = BAR4")
+            `CHECK(MSIX_PBA_BIR == 3'd4, "F.8 MSI-X PBA BIR = BAR4")
+            `CHECK(MSIX_PBA_BYTE_OFF == 'h800, "F.8 MSI-X PBA @ 0x800")
         end
 
         $display("\n================================================");
