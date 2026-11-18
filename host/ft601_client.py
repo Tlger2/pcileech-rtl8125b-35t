@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import struct
 import sys
+import time
 from dataclasses import dataclass
 from enum import IntEnum
 from typing import Iterable, Optional
@@ -814,10 +815,11 @@ DMA_GO_WRITE = 0x2
 # Donor identity (must match rtl/rtl8125b_identity_pkg.sv)
 DONOR_VID = 0x10EC
 DONOR_DID = 0x8125
-DONOR_REV = 0x05
-DONOR_SVID = 0x10EC
-DONOR_SSID = 0x0123
+DONOR_REV = 0x04
+DONOR_SVID = 0x1043
+DONOR_SSID = 0x87D7
 DONOR_MAC = bytes((0x00, 0xE0, 0x4C, 0x7A, 0x3B, 0x91))
+DMA_SAFE_PA = 0x01000000  # existing bring-up test PA; do not DMA elsewhere
 
 
 class LeechCoreAdapter:
@@ -1312,6 +1314,59 @@ def _open_or_die() -> FT601Client:
         raise SystemExit(f"FT601 0403:601f open failed ({exc})") from exc
 
 
+def _wait_dma(dev: FT601Client, timeout_s: float = 2.0) -> int:
+    """Poll DMA_STATUS until DONE or ERR. SRAM-only images time out."""
+    deadline = time.monotonic() + timeout_s
+    status = 0
+    while time.monotonic() < deadline:
+        status = dev.read_dw(DMA_STATUS)
+        if status & 0x4:
+            raise RuntimeError(f"DMA ERR STATUS=0x{status:08X}")
+        if status & 0x2:
+            return status
+        time.sleep(0.002)
+    raise TimeoutError(
+        f"DMA timeout STATUS=0x{status:08X} "
+        "(cold boot required after SPI; SRAM-only zeros completer ID)"
+    )
+
+
+def _dma_burst_test(dev: FT601Client, pa: int = DMA_SAFE_PA, n_dw: int = DMA_MAX_DW) -> None:
+    """LENGTH>=32 write-then-read of a known pattern at the bring-up PA."""
+    if pa != DMA_SAFE_PA:
+        raise ValueError(f"refusing PA 0x{pa:X}; only the 0x1000000 test PA is allowed")
+    if n_dw < 32:
+        raise ValueError("burst test requires LENGTH>=32")
+    pattern = [0xA5A5A5A5 ^ (i * 0x01010101) for i in range(n_dw)]
+    print(f"dma-burst: PA=0x{pa:X} LENGTH={n_dw} ({n_dw * 4} B)")
+    r20 = dev.read_dw(0x20)
+    r34 = dev.read_dw(0x34)
+    print(f"  completer effective=0x{(r20 >> 16) & 0xFFFF:04X} raw=0x{r34 & 0xFFFF:04X} "
+          f"cmd=0x{r20 & 0xFFFF:04X}")
+    r38 = dev.read_dw(0x38)
+    spd = (r38 >> 24) & 0xF
+    print(f"  link_speed={spd} (1=Gen1 2=Gen2) diag=0x{r38:08X}")
+    if ((r20 >> 16) & 0xFFFF) == 0:
+        print("  WARN: latched completer ID is 0 — CplD needs a cold boot, not SRAM-only")
+    dev.write_dw(DMA_ADDR_LO, pa & 0xFFFFFFFF)
+    dev.write_dw(DMA_ADDR_HI, (pa >> 32) & 0xFFFFFFFF)
+    dev.write_burst(DMA_BUF, pattern)
+    dev.write_dw(DMA_LENGTH, n_dw)
+    dev.write_dw(DMA_CTRL, DMA_GO_WRITE)
+    _wait_dma(dev)
+    print("  write DONE")
+    dev.write_dw(DMA_ADDR_LO, pa & 0xFFFFFFFF)
+    dev.write_dw(DMA_ADDR_HI, (pa >> 32) & 0xFFFFFFFF)
+    dev.write_dw(DMA_LENGTH, n_dw)
+    dev.write_dw(DMA_CTRL, DMA_GO_READ)
+    _wait_dma(dev)
+    got = dev.read_burst(DMA_BUF, n_dw)
+    if got != pattern:
+        mismatch = [(i, pattern[i], got[i]) for i in range(n_dw) if pattern[i] != got[i]]
+        raise SystemExit(f"dma-burst MISMATCH {mismatch[:8]}")
+    print("  readback MATCH 128 B")
+
+
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
@@ -1330,6 +1385,9 @@ if __name__ == "__main__":
     ap.add_argument("--dma-read", nargs=2, type=lambda x: int(x, 0),
                     metavar=("PA", "BYTES"),
                     help="LeechCoreAdapter physical read (MAGIC path, up to 128 B/TLP)")
+    ap.add_argument("--dma-burst", action="store_true",
+                    help="128 B write-then-read at PA 0x1000000 (LENGTH=32). "
+                         "Needs cold-boot SPI image; SRAM-only zeros completer ID.")
     ap.add_argument("--identify", action="store_true",
                     help="print LeechCore-shaped identify (offline if no FT601)")
     ap.add_argument("--usb-dump", action="store_true",
@@ -1374,3 +1432,6 @@ if __name__ == "__main__":
         with _open_or_die() as dev:
             data = LeechCoreAdapter(dev).read(args.dma_read[0], args.dma_read[1])
             print(data.hex())
+    if args.dma_burst:
+        with _open_or_die() as dev:
+            _dma_burst_test(dev)

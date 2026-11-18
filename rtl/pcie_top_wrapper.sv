@@ -235,14 +235,10 @@ module pcie_top_wrapper (
     end
 
     // -----------------------------------------------------------------------
-    // Gen1 directed speed retrain on link-up (JTAG SRAM signal integrity fix).
-    //
-    // Root cause: each JTAG SRAM load forces GTP transceiver recalibration.
-    // At Gen2 (5GT/s) the equalization margin is tight enough that LCRC errors
-    // occur → RC sends NAK DLLPs → FPGA DL layer exhausts 4 retries →
-    // replay_num_rollover → CED bit in dstatus. WHEA is silent because NAK is
-    // correct RC behavior (no AER event). The fix is to force Gen1 (2.5GT/s)
-    // via pl_directed_link_change immediately after user_lnk_up asserts.
+    // Gen2 directed speed: keep 5 GT/s if the RP trained it, otherwise ask
+    // once. Do not downtrain a healthy Gen2 link (the old SRAM-SI workaround
+    // forced Gen1 and is why live link sat at 2.5 GT/s). If the uptrain hits
+    // CED (cfg_dstatus[0]) fall back to Gen1 so the link is not bricked.
     //
     // pl_directed_link_change encoding (PG054 Table 2-24):
     //   2'b01 = speed change only (no width change)
@@ -255,43 +251,64 @@ module pcie_top_wrapper (
     wire        pl_dir_chg_done;
     logic [1:0] pl_dir_lnk_chg;
     logic       pl_dir_lnk_spd;
+    logic [23:0] spd_timer;
 
-    typedef enum logic [1:0] {
-        SPD_IDLE, SPD_ASSERT, SPD_DONE, SPD_RSV
+    typedef enum logic [2:0] {
+        SPD_IDLE, SPD_WAIT_UP, SPD_WAIT_DN, SPD_HOLD
     } spd_st_t;
     spd_st_t spd_st;
+
+    wire link_is_gen2 = (cfg_lstatus[3:0] == 4'h2);
+    // ~8 ms @ 62.5 MHz, ~4 ms @ 125 MHz. Directed change is usually faster;
+    // if the core never pulses done, drop the request rather than sit forever.
+    localparam logic [23:0] SPD_TIMEOUT = 24'd500_000;
 
     always_ff @(posedge user_clk_q) begin
         if (user_reset_q) begin
             spd_st         <= SPD_IDLE;
             pl_dir_lnk_chg <= 2'b00;
-            pl_dir_lnk_spd <= 1'b0;
+            pl_dir_lnk_spd <= 1'b1;
+            spd_timer      <= '0;
         end else begin
             case (spd_st)
-                // Wait for link to come up. Only trigger retrain if we
-                // negotiated Gen2 — if we're already Gen1, skip to DONE.
                 SPD_IDLE: begin
                     if (user_lnk_up_q) begin
-                        if (cfg_lstatus[3:0] == 4'h2) begin
-                            pl_dir_lnk_chg <= 2'b01; // speed change only
-                            pl_dir_lnk_spd <= 1'b0;  // target Gen1 (2.5GT/s)
-                            spd_st         <= SPD_ASSERT;
+                        if (link_is_gen2) begin
+                            pl_dir_lnk_chg <= 2'b00;
+                            spd_st         <= SPD_HOLD;
                         end else begin
-                            spd_st <= SPD_DONE;       // already Gen1, skip
+                            pl_dir_lnk_chg <= 2'b01;
+                            pl_dir_lnk_spd <= 1'b1;  // ask for Gen2
+                            spd_timer      <= '0;
+                            spd_st         <= SPD_WAIT_UP;
                         end
                     end
                 end
-                // Hold asserted until IP confirms the directed change.
-                SPD_ASSERT: begin
-                    if (pl_dir_chg_done) begin
+                SPD_WAIT_UP: begin
+                    spd_timer <= spd_timer + 24'd1;
+                    if (pl_dir_chg_done || spd_timer == SPD_TIMEOUT) begin
                         pl_dir_lnk_chg <= 2'b00;
-                        spd_st         <= SPD_DONE;
+                        if (link_is_gen2) begin
+                            spd_st <= SPD_HOLD;
+                        end else if (cfg_dstatus[0]) begin
+                            pl_dir_lnk_chg <= 2'b01;
+                            pl_dir_lnk_spd <= 1'b0;  // CED: back to Gen1
+                            spd_timer      <= '0;
+                            spd_st         <= SPD_WAIT_DN;
+                        end else begin
+                            spd_st <= SPD_HOLD;  // RP stayed Gen1; don't loop
+                        end
                     end
                 end
-                // Latch — stay here until hard reset (user_reset_q).
+                SPD_WAIT_DN: begin
+                    spd_timer <= spd_timer + 24'd1;
+                    if (pl_dir_chg_done || spd_timer == SPD_TIMEOUT) begin
+                        pl_dir_lnk_chg <= 2'b00;
+                        spd_st         <= SPD_HOLD;
+                    end
+                end
                 default: begin
                     pl_dir_lnk_chg <= 2'b00;
-                    pl_dir_lnk_spd <= 1'b0;
                 end
             endcase
         end

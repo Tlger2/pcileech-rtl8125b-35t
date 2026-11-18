@@ -859,8 +859,9 @@ logic [63:0] msix_tx_tdata;
 logic [7:0]  msix_tx_tkeep;
 logic        msix_tx_tvalid, msix_tx_tlast, msix_tx_tready;
 
-logic [31:0] msix_irq_bus;
-assign msix_irq_bus = {31'b0, irq_pulse & cfg_interrupt_msixenable};
+logic [rtl8125b_identity_pkg::MSIX_VECTORS-1:0] msix_irq_bus;
+assign msix_irq_bus = {{(rtl8125b_identity_pkg::MSIX_VECTORS-1){1'b0}},
+                       irq_pulse & cfg_interrupt_msixenable};
 
 msix_mwr_tx #(
     .NUM_VECTORS(rtl8125b_identity_pkg::MSIX_VECTORS)

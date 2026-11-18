@@ -3,24 +3,26 @@
 // header, BAR2 MAC, DSN, cfg_dsn, and host/ft601_client.py must all
 // consume these values so TB and silicon cannot drift.
 //
-// Onboard 8125B on this machine (PnP, 2026-11-18): 10EC:8125
-// SUBSYS 87D7:1043 REV_04, Realtek inbox rtcx21x64, Gen2 x1, 64 KB + 16 KB
-// memory BARs, no I/O. Config-space cap/ECAP DWs were not readable from
-// user mode without a dump tool, so SSID/rev stay the working 10EC:0123
-// rev 05 donor (Null rtcx21 bind / DMA after cold boot). Do not invent
-// SSIDs. BAR/cap behaviour is deepened toward that onboard 8125B instead.
+// Onboard 8125B dump (PnP + NetAdapterHardwareInfo, 2026-11-18, not admin):
+//   PCI\VEN_10EC&DEV_8125&SUBSYS_87D71043&REV_04  (Type-0 DW0/DW2/DW11)
+//   SVID 1043 SSID 87D7 REV 04, class 020000, AER present
+//   Gen2 x1 live and max (CurrentLinkSpeed=2, MaxLinkSpeed=2, width=1)
+//   Memory BARs 64 KB @ A75F0000 + 16 KB @ A75EC000, no I/O
+//   MSI-X supported, MaxInterruptMessages=32; inbox rtcx21 1.0.0.14
+//   Onboard MAC 7C:10:C9:45:5E:D0 is NOT copied (two NICs on one host)
+// Cap/ECAP DWs beyond the Type-0 header were not readable from user mode.
 
 package rtl8125b_identity_pkg;
 
     localparam logic [15:0] VENDOR_ID        = 16'h10EC;
     localparam logic [15:0] DEVICE_ID        = 16'h8125;
-    localparam logic [7:0]  REVISION_ID      = 8'h05;
+    localparam logic [7:0]  REVISION_ID      = 8'h04;
     localparam logic [23:0] CLASS_CODE       = 24'h020000;
-    localparam logic [15:0] SUBSYS_VENDOR_ID = 16'h10EC;
-    localparam logic [15:0] SUBSYS_ID        = 16'h0123;
+    localparam logic [15:0] SUBSYS_VENDOR_ID = 16'h1043;
+    localparam logic [15:0] SUBSYS_ID        = 16'h87D7;
 
     // Realtek OUI 00:E0:4C. Unique NIC, not 12:34:56, not zero, and not
-    // a clone of the onboard MAC (two adapters on one host).
+    // a clone of the onboard MAC 7C:10:C9:45:5E:D0 (two adapters on one host).
     localparam logic [47:0] MAC_ADDR = 48'h00_E0_4C_7A_3B_91;
 
     // DSN layout matching Realtek captures:
@@ -32,7 +34,7 @@ package rtl8125b_identity_pkg;
                                       MAC_ADDR[39:32], MAC_ADDR[31:24]};
     localparam logic [63:0] CFG_DSN = {DSN_HI, DSN_LO};
 
-    // BAR map (donor RTL8125B rev 05, SVID/SSID 10EC:0123)
+    // BAR map (onboard RTL8125B rev 04, SVID/SSID 1043:87D7)
     //   BAR0 : I/O 256 B on real silicon. 7-series IP cannot emit I/O BARs;
     //          a 256 B Memory BAR0 Code-10s rtcx21, so BAR0 is omitted and
     //          the MAC window is BAR2 (same layout Windows assigns the

@@ -150,8 +150,8 @@ array set IDENT [identity_from_sv [file join $rtl_dir rtl8125b_identity_pkg.sv]]
 puts "INFO: identity VID=$IDENT(VENDOR_ID) DID=$IDENT(DEVICE_ID) REV=$IDENT(REVISION_ID) SVID=$IDENT(SUBSYS_VENDOR_ID) SSID=$IDENT(SUBSYS_ID)"
 
 set core [get_ips pcie_7x_0]
-# Advertise Gen2 x1 (Artix-7 GTP max; onboard 8125B is Gen2 x1). No Gen3.
-# Wrapper may still direct-retrain to Gen1 after SRAM loads for SI.
+# Advertise Gen2 x1 (Artix-7 GTP max; onboard 8125B is Gen2 x1 live+max).
+# No Gen3. Wrapper keeps Gen2 if the RP trains it; one uptrain, CED→Gen1.
 set_property -dict [list \
     CONFIG.Vendor_ID                $IDENT(VENDOR_ID) \
     CONFIG.Device_ID                $IDENT(DEVICE_ID) \
@@ -272,7 +272,9 @@ if {![ip_try_set $core MSIx_PBA_Offset 00000800]} {
     ip_try_set $core MSIx_PBA_Offset 800
 }
 
-# PM / PCIe device+link: D1+D2, Aux 375mA, ASPM L0s+L1, ClockPM, RBE, LTR.
+# PM / PCIe device+link: D1+D2, Aux 375mA, ASPM L0s+L1 (matches donor),
+# ClockPM, RBE, LTR. Target_Link_Speed 5.0 so Link Control 2 is not stuck
+# at 2.5 GT/s (that plus the old wrapper downtrain is why live link was Gen1).
 foreach {n v} {
     D1_Support             true
     D2_Support             true
@@ -288,6 +290,13 @@ foreach {n v} {
     Clock_PM               true
     Role_Based_Error_Reporting true
     DevCap2_LTR            true
+    Target_Link_Speed      5.0_GT/s
+} {
+    ip_try_set $core $n $v
+}
+foreach {n v} {
+    Target_Link_Speed      5_GT/s
+    Link_Cap_Max_Link_Speed 5.0_GT/s
 } {
     ip_try_set $core $n $v
 }

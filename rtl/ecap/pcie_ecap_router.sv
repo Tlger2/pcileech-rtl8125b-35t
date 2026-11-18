@@ -1,7 +1,7 @@
 // lang: SystemVerilog, file: pcie_ecap_router.sv, target: Xilinx Artix-7 XC7A35T, Vivado 2026.1
 // Extended Configuration Space (ECAP) router.
 //
-// Donor RTL8125B rev 05 / 10EC:0123 chain (byte offsets):
+// Donor RTL8125B rev 04 / 1043:87D7 chain (byte offsets):
 //   0x100 AER  (ID 0x0001 ver 2, 11 DWs) → 0x148
 //   0x148 VC   (ID 0x0002 ver 1,  8 DWs) → 0x168
 //   0x168 DSN  (ID 0x0003 ver 1,  3 DWs) → 0x178
