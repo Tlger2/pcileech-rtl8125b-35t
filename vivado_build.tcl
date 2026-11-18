@@ -281,26 +281,57 @@ report_ip_status -file $rpt_dir/ip_status.rpt
 # Save the previous run's diagnostics before reset_run clears its directory.
 set archive_dir [file join $rpt_dir [clock format [clock seconds] -format %Y%m%d-%H%M%S]-[pid]]
 file mkdir $archive_dir
-foreach name {synth_1 impl_1} {
-    set run [get_runs $name]
+foreach name {synth_1 impl_1 pcie_7x_0_synth_1} {
+    set run [get_runs -quiet $name]
+    if {![llength $run]} { continue }
     set status [get_property STATUS $run]
     puts "INFO: Previous $name status: $status"
     if {[string match -nocase "*running*" $status] || [string match -nocase "*queued*" $status]} {
-        error "Run $name is active; wait for it to finish before rebuilding."
+        puts "INFO: resetting stuck $name ($status)"
+        reset_run $name
     }
     foreach log [glob -nocomplain -directory [get_property DIRECTORY $run] *.log *.jou *.rpt] {
         file copy $log [file join $archive_dir ${name}_[file tail $log]]
     }
 }
+proc poll_run {name timeout_s {step ""}} {
+    set t0 [clock seconds]
+    while {1} {
+        set st [get_property STATUS [get_runs $name]]
+        set pr [get_property PROGRESS [get_runs $name]]
+        puts "POLL $name progress=$pr status=$st"
+        if {$step ne ""} {
+            if {[string match "${step} Complete*" $st]} {
+                return 1
+            }
+        } elseif {[string match "*Complete*" $st] ||
+                  [string match "*cached IP*" $st]} {
+            return 1
+        }
+        if {[string match "*Fail*" $st] || [string match "*Error*" $st]} {
+            puts "RUN_FAILED $name: $st"
+            return 0
+        }
+        if {([clock seconds] - $t0) > $timeout_s} {
+            puts "RUN_TIMEOUT $name: $st"
+            return 0
+        }
+        after 15000
+    }
+}
 proc run_step {name step} {
     launch_runs $name -to_step $step -jobs 4
-    # wait_on_run -timeout is seconds. Synth/impl on XC7A35T is many minutes;
-    # a 20 s cap would abort every laptop bitstream.
-    catch {wait_on_run $name} wait_message
+    # wait_on_run has hung after synth on this host; poll STATUS instead.
+    set timeout_s 3600
+    if {$name eq "synth_1"} { set timeout_s 1800 }
+    if {![poll_run $name $timeout_s $step]} {
+        error "$name failed at $step: [get_property STATUS [get_runs $name]]. See [get_property DIRECTORY [get_runs $name]]/runme.log"
+    }
     set status [get_property STATUS [get_runs $name]]
     puts "INFO: $name status: $status"
-    if {![string match "${step} Complete*" $status]} {
-        error "$name failed at $step: $status ($wait_message). See [get_property DIRECTORY [get_runs $name]]/runme.log"
+    if {![string match "${step} Complete*" $status] &&
+        !($step eq "" && [string match "*cached IP*" $status])} {
+        error "$name failed at $step: $status. See [get_property DIRECTORY [get_runs $name]]/runme.log"
     }
 }
 # Force IP OOC re-synthesis — Vivado reuses the cached DCP unless we reset the
@@ -313,11 +344,14 @@ if {[llength $ip_synth_run]} {
     puts "INFO: Resetting $ip_synth_run_name to force OOC re-synthesis from XCI"
     reset_run $ip_synth_run_name
     launch_runs $ip_synth_run_name -jobs 4
-    catch {wait_on_run $ip_synth_run_name} ip_wait_msg
+    if {![poll_run $ip_synth_run_name 1800]} {
+        error "$ip_synth_run_name failed: [get_property STATUS [get_runs $ip_synth_run_name]]. See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
+    }
     set ip_status [get_property STATUS [get_runs $ip_synth_run_name]]
     puts "INFO: $ip_synth_run_name status: $ip_status"
-    if {![string match "*Complete*" $ip_status]} {
-        error "$ip_synth_run_name failed: $ip_status ($ip_wait_msg). See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
+    if {![string match "*Complete*" $ip_status] &&
+        ![string match "*cached IP*" $ip_status]} {
+        error "$ip_synth_run_name failed: $ip_status. See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
     }
 } else {
     puts "WARN: Run $ip_synth_run_name not found — IP OOC synth may reuse stale DCP"
@@ -348,17 +382,19 @@ if {$wns eq "" || $whs eq "" || $wns < 0 || $whs < 0} {
 if {[llength [get_files -quiet -of_objects [get_filesets constrs_1] -filter {FILE_TYPE == XDC}]] == 0} {
     error "Bitstream withheld: constrs_1 has no board XDC."
 }
-close_design
-run_step impl_1 write_bitstream
+# Write the bitstream from the open routed design. launch_runs write_bitstream
+# is easy to miss: poll_run can see "route_design Complete!" and return early.
 set bit_path [file join [get_property DIRECTORY [get_runs impl_1]] pcie_top_wrapper.bit]
 set bin_path [file join [get_property DIRECTORY [get_runs impl_1]] pcie_top_wrapper.bin]
+puts "INFO: WNS=$wns WHS=$whs — writing $bit_path"
+write_bitstream -force $bit_path
 puts "INFO: Bitstream: $bit_path"
 
-# Generate SPI-flashable .bin image (SPIx4, matches W25Q64 on CaptainDMA fgg484 board).
-# openFPGALoader needs .bin, not .bit.  -size 16 = 16 Mbit (W25Q64 is 64Mbit; 16
-# is the minimum ceiling — the image fits fine).
-write_cfgmem -format bin -interface SPIx4 -size 16 \
+# Generate SPI-flashable .bin image (SPIx4). CaptainDMA 35T flash is ISSI
+# IS25LP032 (32 Mbit). XC7A35T bitstream is 16.85 Mbit, so size 16 is too
+# small; size 32 matches the part. OFL can also program the .bit directly.
+write_cfgmem -format bin -interface SPIx4 -size 32 \
     -loadbit "up 0x0 $bit_path" \
     -force $bin_path
 puts "INFO: SPI flash image: $bin_path"
-puts "INFO: Flash with: openFPGALoader -c ft4232 --fpga-part xc7a35tfgg484 -f $bin_path"
+puts "INFO: Flash with: openFPGALoader -c ft4232 --fpga-part xc7a35tfgg484 -f --verify --unprotect-flash $bin_path"
