@@ -10,8 +10,10 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 
 Donor identity (single source: [`rtl/rtl8125b_identity_pkg.sv`](rtl/rtl8125b_identity_pkg.sv)):
 
-- VID `10EC`, DID `8125`, Rev `05`, SVID/SSID `10EC:0123`, class `020000`
-- MAC `00:E0:4C:7A:3B:91` (DSN derived from the same MAC, also `cfg_dsn`)
+- VID `10EC`, DID `8125`, Rev `04`, SVID/SSID `1043:87D7`, class `020000`
+  (onboard PnP Type-0 DWs: `PCI\VEN_10EC&DEV_8125&SUBSYS_87D71043&REV_04`)
+- MAC `00:E0:4C:7A:3B:91` (DSN derived from the same MAC, also `cfg_dsn`;
+  not a clone of onboard `7C:10:C9:45:5E:D0`)
 - TxConfig chip id `0x64Axxxxx` so r8169/r8125 IDs RTL8125B
 
 Done in RTL (needs a Vivado rebuild + SPI reflash + **cold boot** before silicon matches):
@@ -34,14 +36,20 @@ Still cannot be 1:1 on XC7A35T `pcie_7x`:
   map Windows assigns the onboard 8125B on this machine). Comment is at the
   constraint site in `pci_type0_cfg_header.sv` and `vivado_build.tcl`.
 - **Gen3.** Artix-7 GTP is Gen2 x1 max. Soft PCIe cap advertises Gen2 x1.
+  `pcie_7x` 3.3 has no `Target_Link_Speed` / `Link_Cap_Max_Link_Speed` properties
+  (both skip); advertised speed is `CONFIG.Link_Speed = 5.0_GT/s`. The wrapper
+  keeps Gen2 if the RP trained it, otherwise one `pl_directed_link_change`
+  uptrain, CED → Gen1. Live 5 GT/s still needs the RP to allow it.
 - **Live `cfg_ext_*`.** Vivado 2026.1 `pcie_7x` 3.3 has no `cfg_ext_*` ports, so
   silicon ECAPs must be baked into the IP (`vivado_build.tcl`). The soft router
   is the TB/source-of-truth copy of those DWs.
 - Full GPHY/OCP/ERI/CSI maps beyond the Flag protocol + a small stub array.
-- Onboard SSID `1043:87D7` rev `04` — PnP confirmed, but config-space
-  cap/ECAP DWs were not dumped, so silicon stays `10EC:0123` rev `05`
-  (working Null rtcx21 bind). Do not invent SSIDs.
+- Cap/ECAP DWs beyond Type-0 were not readable from user mode (no admin
+  dump tool). Soft/IP ECAPs stay the baked 8125B chain.
 - SRAM-only reload zeros the completer-ID latch; CplD/DMA still need cold boot.
+- After SSID match Windows inbox `rtcx21` (Microsoft 1.0.0.14) will rank-match
+  the same hardware ID as the onboard NIC. Do not force-install `rt640x64`.
+  The Null `oem39.inf` only matches `10EC:0123`; keep it if DMA would break.
 
 ## Modules
 
@@ -116,10 +124,10 @@ for every defined `X`).
 
 - **Board:** CaptainDMA 35T (XC7A35T FGG484 + FTDI FT601 USB 3.0 bridge)
 - **SPI flash:** ISSI IS25LP032 (32 Mbit), not Winbond W25Q64
-- **Spoof target:** Realtek RTL8125B 2.5GbE NIC, donor `10EC:0123` rev `05`
-  - VID `0x10EC`, DID `0x8125`, Class `0x020000`, Rev `0x05`
-  - Subsys VID `0x10EC`, SSID `0x0123`
-  - PCIe Gen2 x1 advertised (core often runs Gen1 after directed retrain)
+- **Spoof target:** Realtek RTL8125B 2.5GbE NIC, onboard donor `1043:87D7` rev `04`
+  - VID `0x10EC`, DID `0x8125`, Class `0x020000`, Rev `0x04`
+  - Subsys VID `0x1043`, SSID `0x87D7`
+  - PCIe Gen2 x1 advertised; wrapper keeps/uptrains 5 GT/s (CED falls back to Gen1)
   - BAR2 64 KB 64-bit non-prefetchable (MAC), BAR4 16 KB 64-bit npref (MSI-X)
   - Donor I/O 256 B BAR0 is omitted (7-series IP limit)
 

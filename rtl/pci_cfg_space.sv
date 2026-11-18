@@ -1,7 +1,7 @@
 // Top-level config space: Type 0 header + PM/MSI/PCIe/MSI-X/VPD cap chain.
 // Routes a DW-indexed cfg port to whichever module owns that DW.
 //
-// Address layout (byte offsets), donor RTL8125B rev 05 / 10EC:0123:
+// Address layout (byte offsets), donor RTL8125B rev 04 / 1043:87D7:
 //   0x00 .. 0x3F : Type 0 header   (DW idx  0..15)
 //   0x40 .. 0x47 : PM Cap          (DW idx 16..17)
 //   0x50 .. 0x67 : MSI Cap         (DW idx 20..25) 64-bit + mask/pending

@@ -1,7 +1,7 @@
 // PCI Type 0 Configuration Space (first 64 bytes / 16 DWs) for an endpoint
 // impersonating a Realtek RTL8125B 2.5 GbE NIC.
 //
-// Identity comes from rtl8125b_identity_pkg (10EC:8125 rev 05, SVID/SSID 10EC:0123).
+// Identity comes from rtl8125b_identity_pkg (10EC:8125 rev 04, SVID/SSID 1043:87D7).
 //
 // BAR map presented to the host matches XC7A35T pcie_7x silicon, not the
 // donor's I/O BAR0 (7-series IP cannot emit I/O BARs; a 256 B Memory BAR0
