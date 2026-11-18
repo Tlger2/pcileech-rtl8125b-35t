@@ -247,6 +247,9 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                     length_q <= clamp_len(rf_wdata, mps_dw);
                 end
                 CTRL_ADDR: begin
+                    // dma_hold_req is tied off in the top — do not wire BME or
+                    // tlp_jitter_fsm into it. GO still samples Command[2] so
+                    // BME=0 does not enter ST_WAIT_CPL; the RC also drops if BME=0.
                     if (state_q == ST_IDLE && !dma_hold_req && cfg_command[2]) begin
                         xfer_len_q <= go_len;
                         if (rf_wdata[0]) begin
@@ -260,6 +263,8 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                             fourdw_q <= (addr_hi_q != 32'h0);
                             dw0_q <= (addr_hi_q != 32'h0 ? 32'h2000_0000 : 32'h0)
                                    | {22'h0, go_len};
+                            // TX DW1[31:16] = Requester ID (latched completer ID).
+                            // Do not hardcode 0x0500. SRAM-only GSR zeros the latch.
                             dw1_q <= {eff_completer_id, tag_q,
                                       (go_len == 10'd1) ? 4'h0 : 4'hF, 4'hF};
                             dw2_q <= addr_hi_q;
@@ -270,6 +275,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                             status_q   <= 32'h1;
                             tag_q      <= tag_q + 8'd1;
                             dw0_q <= 32'h6000_0000 | {22'h0, go_len};
+                            // TX DW1[31:16] = Requester ID (latched completer ID).
                             dw1_q <= {eff_completer_id, tag_q,
                                       (go_len == 10'd1) ? 4'h0 : 4'hF, 4'hF};
                             dw2_q <= addr_hi_q;
@@ -292,12 +298,13 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 STATUS_ADDR:  rf_rdata_q <= status_q;
                 RDATA_ADDR:   rf_rdata_q <= rdata_q;
                 32'h1C: rf_rdata_q <= debug_rx_any;
+                // 0x20 = {effective completer ID, cfg_command}
                 32'h20: rf_rdata_q <= {eff_completer_id, cfg_command};
                 32'h24: rf_rdata_q <= {26'b0,state_q,tx_req_ready,tx_req_valid,debug_link_up};
                 32'h28: rf_rdata_q <= debug_tx_beats;
                 32'h2c: rf_rdata_q <= {debug_rx_any[15:0], debug_cpl_beats[15:0]};
                 32'h30: rf_rdata_q <= debug_rx_header;
-                // {tx_err_drop count, raw cfg completer id (0 until latched)}
+                // 0x34 = {tx_err_drop count, raw cfg completer ID (0 until latched / after SRAM GSR)}
                 32'h34: rf_rdata_q <= {debug_tx_err_cnt, cfg_completer_id};
                 32'h38: rf_rdata_q <= debug_link_diag;
                 32'h3C: rf_rdata_q <= debug_bme_wait;

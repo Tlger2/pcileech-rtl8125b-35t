@@ -503,11 +503,10 @@ logic        dma_rx_last;
 logic        dma_cpl_seen;
 logic [31:0] debug_rx_header;
 
-// BME gate removed: dma_hold_req tied low so DMA fires regardless of
-// cfg_command[2]. The 35T target's Realtek driver does not set BME during
-// NdisInitialize, causing the FPGA to stall indefinitely in ST_WAIT_CPL.
-// The RC still enforces BME at the fabric level for real transactions;
-// this change only removes the redundant software-side gate.
+// Invariant: dma_hold_req stays 1'b0. Do not gate DMA on BME here and do
+// not wire tlp_jitter_fsm into this port. dma_engine GO still samples
+// cfg_command[2] so a BME=0 GO does not enter ST_WAIT_CPL. The RC still
+// enforces BME on the link. See FIRMWARE_INVARIANTS.md.
 
 dma_engine u_dma_engine (
     .user_clk         (user_clk),
@@ -541,7 +540,7 @@ dma_engine u_dma_engine (
     .rx_cpl_keep      (dma_rx_keep),
     .rx_cpl_last      (dma_rx_last),
     .rx_any_valid     (m_axis_rx_tvalid),
-    // Jitter gate — tied low, BME gate removed
+    // dma_hold_req tied off (DMA contract). Do not attach BME or jitter.
     .dma_cpl_seen     (dma_cpl_seen),
     .dma_hold_req     (1'b0),
     .tx_err_drop      (tx_err_drop),
@@ -908,7 +907,7 @@ pcie_msi_trigger #(
 // =============================================================================
 // SECTION 10 — TX Arbitration (user_clk domain)
 //
-// Priority: CplD (latency-sensitive) > MSI-X MemWr > DMA engine TLPs.
+// Invariant: CplD > MSI-X > DMA. Do not invert — BAR CplD is latency-sensitive.
 // Source is locked for the duration of a TLP (until tlast + ready).
 // =============================================================================
 localparam logic [1:0] TXSRC_DMA  = 2'd0;
