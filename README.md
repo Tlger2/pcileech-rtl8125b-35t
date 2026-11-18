@@ -134,6 +134,14 @@ RTL identity/BAR/MSI changes are **not** in the currently flashed bitstream unti
 `spiOverJtag_xc7a35tfgg484` (not `tools/bscan_spi_xc7a35t.bit`), and the host
 does a **cold boot**. SRAM-only (`-m`) does not re-enumerate CplD/DMA.
 
+## Firmware contract
+
+Later identity, BAR, USB, or timing edits must not break the proven DMA path
+(`10EC:8125` / `10EC:0123` / rev `05`, GO_READ PA `0x1000000` 1-DW after cold
+boot). Full list (TX arb, completer-ID latch, BAR map, identity package,
+FT601 MAGIC, BME/`dma_hold_req`, 7-series limits):
+**[FIRMWARE_INVARIANTS.md](FIRMWARE_INVARIANTS.md)**.
+
 ```
 C:\msys64\ucrt64\bin\openFPGALoader.exe -c ft4232 --fpga-part xc7a35tfgg484 -f --verify --unprotect-flash pcie_top_wrapper.bit
 C:\msys64\ucrt64\bin\openFPGALoader.exe -c ft4232 --fpga-part xc7a35tfgg484 -m pcie_top_wrapper.bit

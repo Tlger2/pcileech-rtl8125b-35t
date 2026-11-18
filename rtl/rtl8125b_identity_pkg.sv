@@ -2,6 +2,9 @@
 // Live pcie_7x CONFIG (vivado_build.tcl parses this file), soft Type-0
 // header, BAR2 MAC, DSN, cfg_dsn, and host/ft601_client.py must all
 // consume these values so TB and silicon cannot drift.
+// Changing VID/DID/SSID/rev/MAC here without rebuilding pcie_7x IP,
+// SPI reflash, and a cold boot desyncs silicon from RTL/TB.
+// See FIRMWARE_INVARIANTS.md. Proven DMA: 10EC:8125 / 10EC:0123 / rev 05.
 //
 // Onboard 8125B on this machine (PnP, 2026-11-18): 10EC:8125
 // SUBSYS 87D7:1043 REV_04, Realtek inbox rtcx21x64, Gen2 x1, 64 KB + 16 KB
