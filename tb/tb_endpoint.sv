@@ -481,22 +481,23 @@ module tb_endpoint;
             logic [31:0] dw;
             logic [7:0]  cap_ptr, cap_id, next_ptr;
 
-            // C.1 Check identity DW
+            // C.1 Check identity DW (from rtl8125b_identity_pkg)
             cfg_read_dw(6'd0, dw);
-            `CHECK(dw == 32'h8125_10EC, "C.1 DW0 = DID_8125 | VID_10EC")
+            `CHECK(dw == {DEVICE_ID, VENDOR_ID}, "C.1 DW0 = DID | VID from identity pkg")
 
             // C.2 Status bit [4] Capabilities List
             cfg_read_dw(6'd1, dw);
             `CHECK(dw[16+4] == 1'b1, "C.2 Status[4] Capabilities List = 1")
 
-            // C.3 Class Code / Rev ID (donor rev 05, not the older 0x36)
+            // C.3 Class Code / Rev ID
             cfg_read_dw(6'd2, dw);
-            `CHECK(dw == 32'h0200_0005,
-                   "C.3 DW2 = Class 0x020000 | Rev 0x05")
+            `CHECK(dw == {CLASS_CODE, REVISION_ID},
+                   "C.3 DW2 = Class | Rev from identity pkg")
 
             // C.4 Subsys ID
             cfg_read_dw(6'd11, dw);
-            `CHECK(dw == 32'h0123_10EC, "C.4 Subsys ID = 0x0123_10EC")
+            `CHECK(dw == {SUBSYS_ID, SUBSYS_VENDOR_ID},
+                   "C.4 Subsys ID from identity pkg")
 
             // C.5 CapPtr at byte 0x34
             cfg_read_dw(6'd13, dw);
@@ -688,6 +689,27 @@ module tb_endpoint;
             #1;
             `CHECK(bar_irq == 1'b1, "F.5 TxPoll raises irq_pulse when TOK masked")
             bar_wr = 0;
+            @(posedge clk);
+            // CSIAR Flag protocol (r8169/r8125 CSI)
+            bar_wr = 1; bar_addr = 16'h68; bar_wdata = 32'h0000_0000; bar_be = 4'hF;
+            @(posedge clk);
+            bar_wr = 0;
+            repeat (32) @(posedge clk);
+            bar_rd = 1; bar_addr = 16'h68;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK(bar_rdata[31] == 1'b1, "F.6 CSIAR Flag set on read complete")
+            // GPHY_OCP Flag protocol (stub, not a full GPHY)
+            bar_wr = 1; bar_addr = 16'hB8; bar_wdata = 32'h0000_0000; bar_be = 4'hF;
+            @(posedge clk);
+            bar_wr = 0;
+            repeat (32) @(posedge clk);
+            bar_rd = 1; bar_addr = 16'hB8;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK(bar_rdata[31] == 1'b1, "F.7 GPHY_OCP Flag set on read complete")
         end
 
         $display("\n================================================");

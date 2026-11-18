@@ -40,8 +40,8 @@ def main():
         # DMA_STATUS = 0x10
         status = c.read_dw(DMA_STATUS)
 
-        print(f"cfg_completer_id  : 0x{cfg_completer:04x}  (effective; 0x0500 fallback if raw=0)")
-        print(f"raw_completer_id  : 0x{raw_cid:04x}  (debug 0x34; 0 until RC re-enumerates)")
+        print(f"cfg_completer_id  : 0x{cfg_completer:04x}  (effective; latched last non-zero, debug 0x20)")
+        print(f"raw_completer_id  : 0x{raw_cid:04x}  (debug 0x34; 0 until RC enumerates / after SRAM GSR)")
         print(f"cfg_command       : 0x{cfg_command:04x}")
         print(f"  BME (bit2)      : {bme}  {'[SET]' if bme else '[CLEAR — DMA BLOCKED]'}")
         print(f"  MSE (bit1)      : {mse}")

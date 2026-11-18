@@ -1,7 +1,7 @@
 // lang: SystemVerilog, file: pcie_custom_endpoint_top.sv
 // target: Xilinx Artix-7 XC7A35T, Vivado 2026.1
-// function: PCIe endpoint top — TLP parser/builder, BAR0 CplD, DMA engine,
-//           CDC across ft601_clk/user_clk, TX arbitration, EAC-evasion wiring.
+// function: PCIe endpoint top — TLP parser/builder, BAR2 CplD, DMA engine,
+//           CDC across ft601_clk/user_clk, TX arbitration (CplD > MSI-X > DMA).
 //
 // TLP beat layout (64-bit AXI-Stream, per dma_engine.sv convention):
 //   Beat N: tdata = {DW_(2N+1), DW_(2N)} → DW0 in [31:0], DW1 in [63:32]
@@ -100,6 +100,16 @@ module pcie_custom_endpoint_top (
 // =============================================================================
 logic user_rst_n;
 assign user_rst_n = ~user_reset;
+
+// Last non-zero Completer ID. GSR-zeroed; not cleared by user_reset.
+// SRAM-only reload re-GSRs this to 0 — BAR CplD then needs a cold boot.
+logic [15:0] latched_completer_id = 16'h0;
+always_ff @(posedge user_clk) begin
+    if (cfg_completer_id != 16'h0)
+        latched_completer_id <= cfg_completer_id;
+end
+wire [15:0] eff_completer_id =
+    (cfg_completer_id != 16'h0) ? cfg_completer_id : latched_completer_id;
 
 // XPM wr_clk rst must stay in the ft601_clk domain. OR-ing user_reset
 // (userclk1) into this net is an unsynchronized CDC into the FIFO reset
@@ -784,7 +794,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                     // DW0 = {fmt=010, type=01010, 7'b0, len=1DW} = 32'h4A00_0001
                     // DW1 = {CompleterID[15:0], BCM=0, Status=000(OK), ByteCount=12'd4}
                     cpld_b0 <= {
-                        (cfg_completer_id == 16'h0) ? 16'h0500 : cfg_completer_id,
+                        eff_completer_id,
                         1'b0,
                         3'b000,
                         12'd4,
@@ -866,7 +876,7 @@ msix_mwr_tx #(
     .vec_mask       (msix_vec_mask),
     .pba_set        (msix_pba_set),
     .pba_clear      (msix_pba_clear),
-    .completer_id   (cfg_completer_id),
+    .completer_id   (eff_completer_id),
     .s_axis_tx_tdata(msix_tx_tdata),
     .s_axis_tx_tkeep(msix_tx_tkeep),
     .s_axis_tx_tvalid(msix_tx_tvalid),
