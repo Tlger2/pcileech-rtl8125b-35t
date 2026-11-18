@@ -13,24 +13,24 @@ sys.path.insert(0, os.path.dirname(__file__))
 from ft601_client import (
     FT601Client,
     DMA_CTRL, DMA_ADDR_LO, DMA_ADDR_HI,
-    DMA_LENGTH, DMA_STATUS, DMA_RDATA, DMA_WDATA,
+    DMA_LENGTH, DMA_STATUS, DMA_RDATA, DMA_WDATA, DMA_BUF,
     DMA_GO_READ, DMA_MAX_DW,
 )
 
 # ── DMA read ──────────────────────────────────────────────────────────────────
-# dma_engine is single-DW per transfer (DMA_MAX_DW = 1, 4 bytes each).
-# Larger reads are chunked: one DMA transaction per DWORD, then offset advances.
+# dma_engine bursts up to DMA_MAX_DW dwords (128 B). Larger reads are chunked.
 
 _STATUS_POLL_MAX = 2000   # read_dw iterations before giving up on a transfer
 _STATUS_DONE_BIT = 0x2    # dma_engine STATUS[1] = DONE
+_STATUS_ERR_BIT  = 0x4    # dma_engine STATUS[2] = ERR (CPL timeout / tag mismatch)
 
 
 def read_phys(client: FT601Client, addr: int, length: int) -> bytes:
     """Read `length` bytes from physical address `addr` via DMA register engine.
 
-    Issues one DWORD DMA per iteration (dma_engine is single-DW).  Polls
-    STATUS[DONE] (bit 1) rather than any-bit to avoid false breaks on BUSY=1
-    while the TLP is still in flight.
+    Issues up to DMA_MAX_DW dwords per TLP, polls STATUS[DONE], then pulls the
+    completion buffer. STATUS[BUSY] is ignored so a still-in-flight read is
+    not treated as success.
     """
     if length <= 0:
         return b''
@@ -39,25 +39,31 @@ def read_phys(client: FT601Client, addr: int, length: int) -> bytes:
     offset = 0
 
     while offset < length:
-        chunk_bytes = min(length - offset, DMA_MAX_DW * 4)   # always 4 bytes
-        pa          = addr + offset
+        chunk_bytes = min(length - offset, DMA_MAX_DW * 4)
+        dws = (chunk_bytes + 3) // 4
+        pa = addr + offset
 
-        # program physical address and fire one-DW read
         client.write_dw(DMA_ADDR_LO, pa & 0xFFFF_FFFF)
         client.write_dw(DMA_ADDR_HI, (pa >> 32) & 0xFFFF_FFFF)
-        client.write_dw(DMA_LENGTH,  1)          # reserved addr — write harmless
-        client.write_dw(DMA_CTRL,    DMA_GO_READ)
+        client.write_dw(DMA_LENGTH, dws)
+        client.write_dw(DMA_CTRL, DMA_GO_READ)
 
-        # poll until DONE (bit 1) is set — ignore BUSY-only to avoid early exit
         for _ in range(_STATUS_POLL_MAX):
-            if client.read_dw(DMA_STATUS) & _STATUS_DONE_BIT:
+            s = client.read_dw(DMA_STATUS)
+            if s & _STATUS_DONE_BIT:
                 break
+            if s & _STATUS_ERR_BIT:
+                raise RuntimeError(
+                    f"DMA engine ERR @ PA {pa:#018x} (offset {offset}) "
+                    f"STATUS={s:#010x} — CPL timeout or tag mismatch; "
+                    f"check BME, PCIe link, and cfg_completer_id"
+                )
         else:
             raise TimeoutError(f"DMA timeout @ PA {pa:#018x} (offset {offset})")
 
-        # read the single completion DWORD
-        dw = client.read_dw(DMA_RDATA)
-        result.extend(struct.pack('<I', dw)[:chunk_bytes])
+        words = client.read_burst(DMA_BUF, dws)
+        raw = b''.join(struct.pack('<I', w) for w in words)
+        result.extend(raw[:chunk_bytes])
         offset += chunk_bytes
 
     return bytes(result)
@@ -255,8 +261,9 @@ def main():
 
     client = FT601Client()
     client.open()
-    # _drain_in removed: raw libusb read bypasses pyftdi state machine and
-    # causes EP OUT timeout.  recv_frame's MAGIC scanner handles stale RX data.
+    drained = client.flush_rx()
+    if drained:
+        print(f"[flush] drained {drained} stale bytes from FT601 IN FIFO", flush=True)
     try:
         if args.ping:
             cmd_ping(client)
