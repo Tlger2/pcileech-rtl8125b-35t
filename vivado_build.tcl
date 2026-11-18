@@ -354,11 +354,11 @@ set bit_path [file join [get_property DIRECTORY [get_runs impl_1]] pcie_top_wrap
 set bin_path [file join [get_property DIRECTORY [get_runs impl_1]] pcie_top_wrapper.bin]
 puts "INFO: Bitstream: $bit_path"
 
-# Generate SPI-flashable .bin image (SPIx4, matches W25Q64 on CaptainDMA fgg484 board).
-# openFPGALoader needs .bin, not .bit.  -size 16 = 16 Mbit (W25Q64 is 64Mbit; 16
-# is the minimum ceiling — the image fits fine).
-write_cfgmem -format bin -interface SPIx4 -size 16 \
+# Generate SPI-flashable .bin image (SPIx4). CaptainDMA 35T flash is ISSI
+# IS25LP032 (32 Mbit). XC7A35T bitstream is 16.85 Mbit, so size 16 is too
+# small; size 32 matches the part. OFL can also program the .bit directly.
+write_cfgmem -format bin -interface SPIx4 -size 32 \
     -loadbit "up 0x0 $bit_path" \
     -force $bin_path
 puts "INFO: SPI flash image: $bin_path"
-puts "INFO: Flash with: openFPGALoader -c ft4232 --fpga-part xc7a35tfgg484 -f $bin_path"
+puts "INFO: Flash with: openFPGALoader -c ft4232 --fpga-part xc7a35tfgg484 -f --verify --unprotect-flash $bin_path"

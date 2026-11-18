@@ -7,10 +7,11 @@ module ft601_sfifo (
 
     // ---- FT601 physical pins ----
     input  logic        ft601_rxf_n,    // RX FIFO not-empty (active low)
-    input  logic        ft601_txe_n,    // TX FIFO not-full  (active low)
+    input  logic        ft601_txe_n,    // TXE#: 0 = TX space available (FTDI 245)
     output logic        ft601_oe_n, // Output Enable (active low)
     output logic        ft601_rd_n, // Read strobe (active low)
     output logic        ft601_wr_n, // Write strobe (active low)
+    output logic        ft601_siwu_n,   // Send Immediate / Wake Up (active low)
     inout  wire  [31:0] ft601_data,     // Bidirectional 32-bit bus
     inout  wire   [3:0] ft601_be,       // Byte enable (bidirectional)
 
@@ -34,6 +35,8 @@ module ft601_sfifo (
     logic [31:0] tx_data;
     logic [3:0] tx_be;
     wire rx_request = !ft601_rxf_n && (!fifo_rd_valid || fifo_rd_ready);
+    // Datasheet: write only while TXE# is low. A WR# gap while TXE# stays
+    // low is a session underrun, so a multi-word frame must be one burst.
     wire tx_request = tx_pending && !ft601_txe_n;
 
     wire tristate_next = !(next_state == TX_SETUP || next_state == TX_WRITE);
@@ -52,13 +55,18 @@ module ft601_sfifo (
         end
         assign pin_bus[bit_index] = tristate_pin ? 1'bz : tx_bus[bit_index];
     end
-    assign fifo_wr_ready = rst_n && !tx_pending;
+    // Ready in IDLE so a word can queue, and during TX_WRITE so the next
+    // beat is consumed without deasserting WR#.
+    assign fifo_wr_ready = rst_n && !tx_pending && (state != TX_WRITE)
+                        || rst_n && (state == TX_WRITE) && !ft601_txe_n && fifo_wr_valid;
 
     always_comb begin
         next_state = state;
         case (state)
             IDLE: begin
-                if (tx_request && (prefer_tx || !rx_request))
+                // TX first. Host OUT leaves RXF# low; if RD never retires
+                // that word, OE# would stay asserted and WR# would never run.
+                if (tx_request)
                     next_state = TX_SETUP;
                 else if (rx_request)
                     next_state = RX_OE;
@@ -67,11 +75,14 @@ module ft601_sfifo (
                 if (ft601_rxf_n) next_state = TURN;
                 else             next_state = RX_READ;
             end
-            TX_SETUP: begin
-                if (ft601_txe_n) next_state = TURN;
-                else             next_state = TX_WRITE;
+            TX_SETUP: next_state = TX_WRITE;
+            RX_READ: next_state = TURN;
+            TX_WRITE: begin
+                if (!ft601_txe_n && fifo_wr_valid)
+                    next_state = TX_WRITE;
+                else
+                    next_state = TURN;
             end
-            RX_READ, TX_WRITE: next_state = TURN;
             default: next_state = IDLE;
         endcase
     end
@@ -88,11 +99,14 @@ module ft601_sfifo (
             ft601_oe_n <= 1'b1;
             ft601_rd_n <= 1'b1;
             ft601_wr_n <= 1'b1;
+            // SIWU# is reserved on FT601. The datasheet requires a pull-up.
+            ft601_siwu_n <= 1'b1;
         end else begin
             state <= next_state;
             ft601_oe_n <= !(next_state == RX_OE || next_state == RX_READ);
             ft601_rd_n <= next_state != RX_READ;
             ft601_wr_n <= next_state != TX_WRITE;
+            ft601_siwu_n <= 1'b1;
             if (fifo_rd_valid && fifo_rd_ready)
                 fifo_rd_valid <= 1'b0;
             if (fifo_wr_valid && fifo_wr_ready) begin
@@ -103,17 +117,25 @@ module ft601_sfifo (
 
             case (state)
                 RX_READ: begin
-                    if (!ft601_rxf_n) begin
-                        fifo_rd_data <= ft601_data;
-                        fifo_rd_valid <= 1'b1;
-                        prefer_tx <= 1'b1;
-                    end
+                    // Capture on the RD# beat. RXF# can rise on the last
+                    // word during OE#; requiring it still low drops the
+                    // beat and leaves OE# stuck in the RX loop.
+                    fifo_rd_data <= ft601_data;
+                    fifo_rd_valid <= 1'b1;
+                    prefer_tx <= 1'b1;
                 end
                 TX_WRITE: begin
-                    if (!ft601_txe_n) begin
+                    // FT601 samples the current beat on this edge. Keep the
+                    // buffer if TXE# was high (beat ignored) or load the
+                    // next beat when the producer still has data.
+                    if (!ft601_txe_n && fifo_wr_valid && fifo_wr_ready) begin
+                        tx_pending <= 1'b1;
+                        tx_data    <= fifo_wr_data;
+                        tx_be      <= fifo_wr_be;
+                    end else if (!ft601_txe_n) begin
                         tx_pending <= 1'b0;
-                        prefer_tx <= 1'b0;
                     end
+                    prefer_tx <= 1'b0;
                 end
                 default: ;
             endcase

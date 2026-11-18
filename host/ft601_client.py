@@ -39,22 +39,6 @@ except ImportError:  # pragma: no cover
 
 FRAME_MAGIC = 0x5AA5_C33C
 
-# ------------------------------------------------------------------
-# DMA engine register map — must match rtl/dma_engine.sv localparam block.
-# All addresses are 32-bit byte-addressed.
-# ------------------------------------------------------------------
-DMA_CTRL    = 0x0000_0000  # WO: [0]=GO_READ  [1]=GO_WRITE
-DMA_ADDR_LO = 0x0000_0004  # RW: physical address [31:0]
-DMA_ADDR_HI = 0x0000_0008  # RW: physical address [63:32]
-DMA_WDATA   = 0x0000_000C  # RW: data written to memory on GO_WRITE
-DMA_STATUS  = 0x0000_0010  # RO: [0]=BUSY [1]=DONE [2]=ERR
-DMA_RDATA   = 0x0000_0014  # RO: completion data from last GO_READ
-DMA_LENGTH  = 0x0000_0018  # Reserved — dma_engine is single-DW per transfer; write harmless
-
-DMA_GO_READ  = 0x1         # value written to DMA_CTRL to fire a read
-DMA_GO_WRITE = 0x2         # value written to DMA_CTRL to fire a write
-DMA_MAX_DW   = 1           # single DWORD per transfer; read_phys iterates per DW
-
 
 # ------------------------------------------------------------------
 # Opcode LUT — must stay in lock-step with rtl/opcode_scramble_pkg.sv
@@ -252,7 +236,7 @@ def _configure_ft601(dev) -> None:
         try:
             dev.set_configuration(value)
             return
-        except usb.core.USBError:
+        except (usb.core.USBError, ValueError):
             continue
     try:
         dev.get_active_configuration()
@@ -489,6 +473,9 @@ class FT601Client:
         self._ep_out: Optional[int] = None
         self._ep_in: Optional[int] = None
         self._intf_num: Optional[int] = None
+        self._session_counter = 0
+        self._rx_buffer = bytearray()
+        self._session_intf_claimed = False
 
     @property
     def is_open(self) -> bool:
@@ -527,6 +514,15 @@ class FT601Client:
         self._ep_out = int(ep_out.bEndpointAddress)
         self._ep_in = int(ep_in.bEndpointAddress)
         self._intf_num = int(intf.bInterfaceNumber)
+        self._session_counter = 0
+        self._rx_buffer = bytearray()
+        self._session_intf_claimed = False
+        try:
+            usb.util.claim_interface(dev, 0)
+            self._session_intf_claimed = True
+        except Exception:
+            self.close()
+            raise
         return self
 
     def close(self) -> None:
@@ -539,6 +535,13 @@ class FT601Client:
         if dev is None:
             return
         if _HAVE_PYUSB:
+            if getattr(self, "_session_intf_claimed", False):
+                try:
+                    usb.util.release_interface(dev, 0)
+                except Exception:
+                    pass
+                self._session_intf_claimed = False
+            self._rx_buffer = bytearray()
             try:
                 if intf_num is not None:
                     usb.util.release_interface(dev, intf_num)
@@ -580,25 +583,39 @@ class FT601Client:
             written += n
         return written
 
+    def _start_read_session(self, nbytes: int) -> None:
+        # Non-stream FT601 reads require a new session command per USB read.
+        self._session_counter = (self._session_counter + 1) & 0xFFFFFFFF
+        packet = bytearray(20)
+        struct.pack_into("<I", packet, 0, self._session_counter)
+        packet[4] = self._ep_in
+        packet[5] = 0x01
+        struct.pack_into("<I", packet, 8, nbytes)
+        transferred = self._dev.write(0x01, packet, self._timeout_ms)
+        if transferred != len(packet):
+            raise IOError(f"short FT601 read-session command: {transferred}/20")
+
     def _read_raw(self, nbytes: int) -> bytes:
         if self._dev is None or self._ep_in is None:
             raise IOError("device not open")
         if nbytes <= 0:
             return b""
-        timeout = self._timeout_ms
-        buf = bytearray()
-        while len(buf) < nbytes:
-            want = min(self.READ_CHUNK, nbytes - len(buf))
+        # Fetch whole USB responses, preserving bytes beyond the parser's
+        # current 4/8-byte request instead of discarding packet tails.
+        while len(self._rx_buffer) < nbytes:
+            self._start_read_session(self.READ_CHUNK)
             try:
-                chunk = self._dev.read(self._ep_in, want, timeout)
+                chunk = self._dev.read(self._ep_in, self.READ_CHUNK, self._timeout_ms)
             except Exception as exc:
                 if _is_usb_timeout(exc):
-                    break  # short read: return what we have
+                    break
                 raise
             if not chunk:
                 break
-            buf.extend(bytes(chunk))
-        return bytes(buf)
+            self._rx_buffer.extend(bytes(chunk))
+        result = bytes(self._rx_buffer[:nbytes])
+        del self._rx_buffer[:nbytes]
+        return result
 
     # ------------------------- framing ---------------------------
     def send_frame(self, frame: Frame) -> None:
@@ -637,6 +654,8 @@ class FT601Client:
             raise IOError("short read on HDR/ADDR")
         hdr, addr = struct.unpack("<II", hdr_addr)
         length_dw = hdr & 0xFFFF
+        if decode_opcode(hdr >> 24) == Opcode.INVALID:
+            raise IOError(f"invalid response header: {hdr:#010x}")
         if expect_payload_dw and length_dw != expect_payload_dw:
             raise IOError(
                 f"unexpected payload length: got {length_dw}, want {expect_payload_dw}"
@@ -676,6 +695,8 @@ class FT601Client:
             req_length_dw=1,
         ))
         rsp = self.recv_frame(expect_payload_dw=1)
+        if rsp.opcode != Opcode.READ or rsp.address != address:
+            raise IOError("mismatched READ response")
         return rsp.payload[0]
 
     def read_burst(self, address: int, length_dw: int, flags: int = 0) -> list[int]:
@@ -689,6 +710,8 @@ class FT601Client:
             req_length_dw=length_dw,
         ))
         rsp = self.recv_frame(expect_payload_dw=length_dw)
+        if rsp.opcode != Opcode.READ_BURST or rsp.address != address:
+            raise IOError("mismatched READ_BURST response")
         return rsp.payload
 
     def transport_summary(self) -> str:
@@ -725,7 +748,10 @@ class FT601Client:
             opcode=Opcode.KEEPALIVE,
             flags=0, address=0, payload=[], req_length_dw=0
         ))
-        return self.recv_frame()
+        rsp = self.recv_frame()
+        if rsp.opcode != Opcode.KEEPALIVE or rsp.flags or rsp.address or rsp.payload:
+            raise IOError("invalid KEEPALIVE response")
+        return rsp
 
     def get_version(self) -> Frame:
         self.send_frame(Frame(
@@ -739,6 +765,37 @@ class FT601Client:
             opcode=Opcode.RESET,
             flags=0, address=0, payload=[]
         ))
+
+    def flush_rx(self, timeout_ms: int = 50, max_reads: int = 256) -> int:
+        """
+        Drain stale frames left in the FT601 USB IN FIFO from a prior session.
+
+        After a JTAG bitstream reload the FPGA resets but the FT601 USB chip
+        keeps its hardware FIFO. Any READ-response frames queued by the
+        previous session's poll loop sit there and will be misread as current
+        hardware state. This method does raw bulk reads (no MAGIC scanning)
+        until the endpoint times out, discarding everything.
+
+        Call once immediately after open(), before the first read_dw().
+        Returns the number of bytes drained.
+        """
+        if self._dev is None or self._ep_in is None:
+            return 0
+        self._rx_buffer.clear()
+        drained = 0
+        for _ in range(max_reads):
+            try:
+                self._start_read_session(self.READ_CHUNK)
+                chunk = self._dev.read(self._ep_in, self.READ_CHUNK, timeout_ms)
+                if not chunk:
+                    break
+                drained += len(chunk)
+            except Exception as exc:
+                if _is_usb_timeout(exc):
+                    break
+                break  # any non-timeout error: stop draining
+        self._rx_buffer.clear()
+        return drained
 
 
 # DMA engine register file (byte addresses on the MAGIC/opcode path).
@@ -973,13 +1030,22 @@ def _selftest() -> None:
             self.tx = bytearray()
             self.rx = bytearray(rx)
             self.timeouts_left = 0
+            self.sessions = []
+            self.read_count = 0
 
         def write(self, _ep, data, timeout=None):
             blob = bytes(data)
-            self.tx.extend(blob)
+            if _ep == 0x01:
+                assert len(blob) == 20 and blob[4:6] == b"\x82\x01"
+                assert struct.unpack_from("<I", blob, 8)[0] == 4096
+                self.sessions.append(blob)
+            else:
+                self.tx.extend(blob)
             return len(blob)
 
         def read(self, _ep, size, timeout=None):
+            assert len(self.sessions) == self.read_count + 1
+            self.read_count += 1
             if self.timeouts_left > 0:
                 self.timeouts_left -= 1
                 raise TimeoutError("USB timeout")
@@ -994,11 +1060,16 @@ def _selftest() -> None:
     loop = FT601Client()
     loop._dev = fake
     loop._ep_out = 0x02
-    loop._ep_in = 0x81
-    loop._intf_num = 0
+    loop._ep_in = 0x82
+    loop._intf_num = 1
     got = loop.ping()
     assert bytes(fake.tx) == ping.to_bytes()
     assert got.opcode == Opcode.KEEPALIVE
+    assert fake.read_count == 1  # 4-byte MAGIC + 8-byte header share one USB read.
+    fake.rx.extend(ack.to_bytes())
+    assert loop.ping().opcode == Opcode.KEEPALIVE
+    assert fake.read_count == 2
+    assert struct.unpack_from("<I", fake.sessions[1])[0] == 2
     silent = _FakeUsbDev()
     loop._dev = silent
     try:
@@ -1181,7 +1252,7 @@ def _selftest() -> None:
             assert opened._dev is sentinel
             assert opened._ep_out == 0x02 and opened._ep_in == 0x82
             assert opened._intf_num == 1
-            assert sentinel.claimed == [1]
+            assert sentinel.claimed == [1, 0]
             assert (1, 1) in sentinel.alts
             opened.close()
             assert opened._dev is None
