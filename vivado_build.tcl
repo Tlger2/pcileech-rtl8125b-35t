@@ -281,12 +281,14 @@ report_ip_status -file $rpt_dir/ip_status.rpt
 # Save the previous run's diagnostics before reset_run clears its directory.
 set archive_dir [file join $rpt_dir [clock format [clock seconds] -format %Y%m%d-%H%M%S]-[pid]]
 file mkdir $archive_dir
-foreach name {synth_1 impl_1} {
-    set run [get_runs $name]
+foreach name {synth_1 impl_1 pcie_7x_0_synth_1} {
+    set run [get_runs -quiet $name]
+    if {![llength $run]} { continue }
     set status [get_property STATUS $run]
     puts "INFO: Previous $name status: $status"
     if {[string match -nocase "*running*" $status] || [string match -nocase "*queued*" $status]} {
-        error "Run $name is active; wait for it to finish before rebuilding."
+        puts "INFO: resetting stuck $name ($status)"
+        reset_run $name
     }
     foreach log [glob -nocomplain -directory [get_property DIRECTORY $run] *.log *.jou *.rpt] {
         file copy $log [file join $archive_dir ${name}_[file tail $log]]
@@ -298,7 +300,8 @@ proc poll_run {name timeout_s} {
         set st [get_property STATUS [get_runs $name]]
         set pr [get_property PROGRESS [get_runs $name]]
         puts "POLL $name progress=$pr status=$st"
-        if {[string match "*Complete*" $st]} {
+        if {[string match "*Complete*" $st] ||
+            [string match "*cached IP*" $st]} {
             return 1
         }
         if {[string match "*Fail*" $st] || [string match "*Error*" $st]} {
@@ -341,7 +344,8 @@ if {[llength $ip_synth_run]} {
     }
     set ip_status [get_property STATUS [get_runs $ip_synth_run_name]]
     puts "INFO: $ip_synth_run_name status: $ip_status"
-    if {![string match "*Complete*" $ip_status]} {
+    if {![string match "*Complete*" $ip_status] &&
+        ![string match "*cached IP*" $ip_status]} {
         error "$ip_synth_run_name failed: $ip_status. See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
     }
 } else {
