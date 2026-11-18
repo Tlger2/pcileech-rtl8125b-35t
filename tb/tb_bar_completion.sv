@@ -9,6 +9,8 @@ module tb_bar_completion;
     logic tx_valid, tx_last, tx_ready = 1;
     logic rx_valid = 0, rx_last = 0;
     logic [15:0] completer_id = 16'h0200;
+    // tuser[8:2] = bar_hit[6:0]; BAR2 = tuser[4]
+    logic [21:0] rx_tuser = 22'h000010;
 
     pcie_custom_endpoint_top dut (
         .user_clk(user_clk), .user_reset(user_reset), .user_lnk_up(1'b1),
@@ -17,12 +19,16 @@ module tb_bar_completion;
         .s_axis_tx_tlast(tx_last), .s_axis_tx_tuser(),
         .m_axis_rx_tdata(rx_data), .m_axis_rx_tkeep(8'hff),
         .m_axis_rx_tvalid(rx_valid), .m_axis_rx_tready(),
-        .m_axis_rx_tlast(rx_last), .m_axis_rx_tuser(22'b0),
-        .cfg_completer_id(completer_id), .cfg_max_payload_size(3'b0),
+        .m_axis_rx_tlast(rx_last), .m_axis_rx_tuser(rx_tuser),
+        .cfg_completer_id(completer_id), .cfg_command(16'h0006),
+        .cfg_max_payload_size(3'b0),
         .cfg_max_read_req_size(3'b0), .link_speed_live(4'd2),
-        .link_width_live(6'd1), .cfg_interrupt(), .cfg_interrupt_rdy(1'b0),
+        .link_width_live(6'd1), .cfg_interrupt(), .cfg_interrupt_rdy(1'b1),
         .cfg_interrupt_assert(), .cfg_interrupt_di(),
         .cfg_interrupt_msienable(1'b0), .cfg_interrupt_mmenable(3'b0),
+        .cfg_interrupt_msixenable(1'b0), .cfg_interrupt_msixfm(1'b0),
+        .tx_err_drop(1'b0), .cfg_trn_pending(), .debug_link_diag(32'h0),
+        .debug_aer(32'h0),
         .ft601_clk(ft601_clk), .ft601_rst_n(!user_reset), .ft601_rxf_n(1'b1),
         .ft601_oe_n(), .ft601_rd_n(), .ft601_wr_n(), .ft601_txe_n(1'b1),
         .ft601_data(), .ft601_be()
@@ -60,7 +66,7 @@ module tb_bar_completion;
         user_reset = 0;
         request_read(8'h5a);
         expect_beat(64'h0200_0004_4a00_0001, 0, 0);
-        expect_beat(64'h4c12_3456_1234_5a00, 1, 0);
+        expect_beat(64'h7a4c_e000_1234_5a00, 1, 0);
         repeat (4) @(negedge user_clk);
         if (tx_valid) $fatal(1, "Unexpected duplicate completion");
 
@@ -72,7 +78,7 @@ module tb_bar_completion;
         #1;
         tx_ready = 0;
         completer_id = 16'habcd;
-        expect_beat(64'h4c12_3456_1234_7b00, 1, 1);
+        expect_beat(64'h7a4c_e000_1234_7b00, 1, 1);
         repeat (4) @(negedge user_clk);
         if (tx_valid) $fatal(1, "Unexpected duplicate completion after a stall");
         $display("PASS: BAR completion delivers both beats with ready high or stalled");

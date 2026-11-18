@@ -1,4 +1,5 @@
 // Top-level integration for the custom PCIe endpoint on CaptainDMA 35T.
+// cfg_dsn is MAC-derived (Realtek OUI) from rtl8125b_identity_pkg.
 //
 // Instantiates pcie_7x_0 (Xilinx 7-Series Integrated Block for PCIe) and
 // wires every port of pcie_custom_endpoint_top to the correct core signal.
@@ -16,6 +17,9 @@ module pcie_top_wrapper (
     output logic [0:0]  pci_exp_txn,
 
     input  logic        board_clk,
+    // FT601 CLK (FIFO master clock). EEPROM selects 66.67 or 100 MHz;
+    // USB 2.0 HS vs SuperSpeed does not change this pin. 30 MHz is the
+    // FT60x crystal, not CLK.
     input  logic        ft601_clk,
     output logic        ft601_rst_n,
     output logic        ft601_siwu_n,
@@ -43,29 +47,59 @@ module pcie_top_wrapper (
     logic sys_rst_n_ibuf;
     IBUF u_perst_ibuf (.I(sys_rst_n), .O(sys_rst_n_ibuf));
 
-    // Release the bridge after 64 board clock cycles. The bridge supplies
-    // ft601_clk, so startup reset must use the independent board oscillator.
-    logic [6:0] ft601_startup_count = '0;
-    always_ff @(posedge board_clk) begin
-        if (!ft601_startup_count[6])
-            ft601_startup_count <= ft601_startup_count + 1'b1;
-    end
-    assign ft601_rst_n = ft601_startup_count[6];
-    assign ft601_siwu_n = 1'b1;
+    // W19 is IO_L12P_T1_MRCC_14. Inferring IBUF+BUFG is what the last
+    // routed netlist already did (BUFGCTRL_X0Y3, 565 loads). Instantiating
+    // it so CLK cannot be treated as a GPIO net.
+    logic ft601_clk_ibuf, ft601_clk_buf;
+    IBUFG u_ft601_clk_ibuf (.I(ft601_clk), .O(ft601_clk_ibuf));
+    BUFG  u_ft601_clk_bufg (.I(ft601_clk_ibuf), .O(ft601_clk_buf));
 
-    (* ASYNC_REG = "TRUE" *) logic [1:0] ft601_reset_release = '0;
-    always_ff @(posedge ft601_clk or negedge ft601_rst_n) begin
-        if (!ft601_rst_n)
-            ft601_reset_release <= '0;
-        else
-            ft601_reset_release <= {ft601_reset_release[0], 1'b1};
+    // Internal ~65 MHz config clock. Independent of board_clk (H4) and of
+    // FT601 CLKOUT (which stops while RESET# is low). Pulse RST# ~1 ms
+    // after EOS so a stuck TXE# / USB-side FIFO recovers without a PSU cycle.
+    logic cfgmclk, cfgmclk_buf, eos;
+    STARTUPE2 u_startupe2 (
+        .CFGCLK   (),
+        .CFGMCLK  (cfgmclk),
+        .EOS      (eos),
+        .PREQ     (),
+        .CLK      (1'b0),
+        .GSR      (1'b0),
+        .GTS      (1'b0),
+        .KEYCLEARB(1'b1),
+        .PACK     (1'b0),
+        .USRCCLKO (1'b0),
+        .USRCCLKTS(1'b1),
+        .USRDONEO (1'b1),
+        .USRDONETS(1'b1)
+    );
+    BUFG u_cfgmclk_buf (.I(cfgmclk), .O(cfgmclk_buf));
+    logic [16:0] ft601_por_cnt = '0;
+    always_ff @(posedge cfgmclk_buf) begin
+        if (!eos)
+            ft601_por_cnt <= '0;
+        else if (!ft601_por_cnt[16])
+            ft601_por_cnt <= ft601_por_cnt + 1'b1;
     end
+    assign ft601_rst_n = ft601_por_cnt[16];
+
+    logic [7:0] ft601_clk_lock = '0;
+    always_ff @(posedge ft601_clk_buf or negedge ft601_rst_n) begin
+        if (!ft601_rst_n)
+            ft601_clk_lock <= '0;
+        else if (ft601_clk_lock != 8'hff)
+            ft601_clk_lock <= ft601_clk_lock + 1'b1;
+    end
+    logic [24:0] ft601_clk_div = '0;
+    always_ff @(posedge ft601_clk_buf)
+        ft601_clk_div <= ft601_clk_div + 1'b1;
 
     // --- User-side clock / reset ---
     logic user_clk_q;
     logic user_reset_q;
     logic user_lnk_up_q;
-    assign user_lnk_up_pin = user_lnk_up_q;
+    // Blink ~1.5 Hz when FT601 CLKOUT is alive (overrides PCIe link LED).
+    assign user_lnk_up_pin = ft601_clk_div[24];
 
     // --- AXIS buses ---
     logic [63:0] s_axis_tx_tdata;
@@ -87,7 +121,7 @@ module pcie_top_wrapper (
 
     logic        cfg_interrupt, cfg_interrupt_rdy, cfg_interrupt_assert;
     logic [7:0]  cfg_interrupt_di, cfg_interrupt_do;
-    logic        cfg_interrupt_msienable, cfg_interrupt_msixenable;
+    logic        cfg_interrupt_msienable, cfg_interrupt_msixenable, cfg_interrupt_msixfm;
     logic [2:0]  cfg_interrupt_mmenable;
 
     // Link Status register — bits[3:0] = current link speed, bits[9:4] = width
@@ -96,18 +130,172 @@ module pcie_top_wrapper (
     // Per PCI Express Base Spec 3.0 §7.8.8:
     //   Link Speed encoding: 0001=Gen1 (2.5 GT/s), 0010=Gen2 (5 GT/s)
     //   Link Width encoding: 000001=x1, 000010=x2 …
-    logic [15:0] cfg_lstatus, cfg_dcommand;
-
-    // --- cfg_mgmt interface (BME auto-enable) ---
-    logic        mgmt_rd_en, mgmt_wr_en;
-    logic [31:0] mgmt_wdata;
-    logic [3:0]  mgmt_byte_en;
-    logic [9:0]  mgmt_dwaddr;
-    logic [31:0] mgmt_rdata;        // wired to cfg_mgmt_do
-    logic        mgmt_done;         // wired to cfg_mgmt_rd_wr_done
-    logic [31:0] mgmt_rdata_lat;    // latched cmd register read value
+    logic [15:0] cfg_lstatus, cfg_dcommand, cfg_command;
+    logic        tx_err_drop;
+    logic        cfg_trn_pending;
+    logic [5:0]  tx_buf_av;
+    logic [15:0] cfg_dstatus;
+    logic [2:0]  cfg_pcie_link_state;
+    logic [7:0]  fc_ph, fc_nph;
+    logic [11:0] fc_pd, fc_npd, fc_cpld;
+    logic [7:0]  fc_cplh;
+    // fc_sel 100 = transmit credits available (PG054).
+    // cfg_lstatus[3:0] = link speed (1=Gen1 2.5GT/s, 2=Gen2 5GT/s)
+    // cfg_lstatus[9:4] = negotiated link width (000001=x1)
+    // Replaces fc_nph (always 12, no debug value) so we can observe post-retrain speed.
+    wire [31:0] debug_link_diag = {cfg_lstatus[7:0], tx_buf_av, cfg_pcie_link_state, cfg_dstatus[14:0]};
     assign cfg_max_payload_size = cfg_dcommand[7:5];
     assign cfg_max_read_req_size = cfg_dcommand[14:12];
+
+    // Vivado 2026.1 pcie_7x 3.3 stub has no cfg_ext_* ports even with
+    // EXT_PCI_CFG_Space true. Keep the donor ECAP ROM synthesizable and
+    // idle; DSN still comes from cfg_dsn on the core.
+    logic [31:0] cfg_ext_ecap_rdata;
+    pcie_ecap_router #(
+        .MAC_ADDR (rtl8125b_identity_pkg::MAC_ADDR)
+    ) u_cfg_ext_ecap (
+        .clk        (user_clk_q),
+        .rst_n      (~user_reset_q),
+        .cfg_rd_en  (1'b0),
+        .cfg_wr_en  (1'b0),
+        .cfg_dwaddr (10'h0),
+        .cfg_be     (4'h0),
+        .cfg_wdata  (32'h0),
+        .cfg_rdata  (cfg_ext_ecap_rdata)
+    );
+
+    // Realtek's driver exits Code 10 without setting Memory Space or Bus
+    // Master. The 7-series block will not master the link until both bits
+    // are set, so write Command[2:1] through cfg_mgmt whenever they drop.
+    logic [31:0] cfg_mgmt_di, cfg_mgmt_do;
+    logic [3:0]  cfg_mgmt_byte_en;
+    logic [9:0]  cfg_mgmt_dwaddr;
+    logic        cfg_mgmt_wr_en, cfg_mgmt_rd_en, cfg_mgmt_rd_wr_done;
+    typedef enum logic [2:0] {
+        MGMT_IDLE, MGMT_RD, MGMT_GAP, MGMT_WR, MGMT_COOL
+    } mgmt_st_t;
+    mgmt_st_t mgmt_st;
+    logic [7:0] mgmt_cool;
+    logic [31:0] aer_cor_status;
+    wire cfg_master_on = cfg_command[2] && cfg_command[1];
+
+    always_ff @(posedge user_clk_q) begin
+        if (user_reset_q) begin
+            mgmt_st          <= MGMT_IDLE;
+            mgmt_cool        <= '0;
+            aer_cor_status   <= '0;
+            cfg_mgmt_di      <= '0;
+            cfg_mgmt_byte_en <= '0;
+            cfg_mgmt_dwaddr  <= '0;
+            cfg_mgmt_wr_en   <= 1'b0;
+            cfg_mgmt_rd_en   <= 1'b0;
+        end else begin
+            cfg_mgmt_wr_en <= 1'b0;
+            cfg_mgmt_rd_en <= 1'b0;
+            case (mgmt_st)
+                MGMT_IDLE: begin
+                    if (mgmt_cool != 0)
+                        mgmt_cool <= mgmt_cool - 1'b1;
+                    else if (user_lnk_up_q && !cfg_master_on) begin
+                        cfg_mgmt_dwaddr <= 10'h1;
+                        cfg_mgmt_rd_en  <= 1'b1;
+                        mgmt_st         <= MGMT_RD;
+                    end
+                end
+
+                MGMT_RD: begin
+                    cfg_mgmt_rd_en <= 1'b1;
+                    if (cfg_mgmt_rd_wr_done) begin
+                        cfg_mgmt_rd_en <= 1'b0;
+                        cfg_mgmt_di    <= {16'h0, cfg_mgmt_do[15:0] | 16'h0006};
+                        mgmt_st        <= MGMT_GAP;
+                    end
+                end
+                MGMT_GAP: begin
+                    cfg_mgmt_dwaddr  <= 10'h1;
+                    cfg_mgmt_byte_en <= 4'h3;
+                    cfg_mgmt_wr_en   <= 1'b1;
+                    mgmt_st          <= MGMT_WR;
+                end
+
+                MGMT_WR: begin
+                    if (cfg_mgmt_rd_wr_done) begin
+                        mgmt_cool <= 8'h0F;
+                        mgmt_st   <= MGMT_COOL;
+                    end
+                end
+                default: begin
+                    if (mgmt_cool == 0)
+                        mgmt_st <= MGMT_IDLE;
+                    else
+                        mgmt_cool <= mgmt_cool - 1'b1;
+                end
+            endcase
+        end
+    end
+
+    // -----------------------------------------------------------------------
+    // Gen1 directed speed retrain on link-up (JTAG SRAM signal integrity fix).
+    //
+    // Root cause: each JTAG SRAM load forces GTP transceiver recalibration.
+    // At Gen2 (5GT/s) the equalization margin is tight enough that LCRC errors
+    // occur → RC sends NAK DLLPs → FPGA DL layer exhausts 4 retries →
+    // replay_num_rollover → CED bit in dstatus. WHEA is silent because NAK is
+    // correct RC behavior (no AER event). The fix is to force Gen1 (2.5GT/s)
+    // via pl_directed_link_change immediately after user_lnk_up asserts.
+    //
+    // pl_directed_link_change encoding (PG054 Table 2-24):
+    //   2'b01 = speed change only (no width change)
+    //   2'b00 = no directed change (normal hold)
+    // pl_directed_link_speed:
+    //   1'b0  = target 2.5GT/s (Gen1)
+    //   1'b1  = target 5GT/s   (Gen2)
+    // pl_directed_change_done: 1-cycle pulse from IP when retrain completes.
+    // -----------------------------------------------------------------------
+    wire        pl_dir_chg_done;
+    logic [1:0] pl_dir_lnk_chg;
+    logic       pl_dir_lnk_spd;
+
+    typedef enum logic [1:0] {
+        SPD_IDLE, SPD_ASSERT, SPD_DONE, SPD_RSV
+    } spd_st_t;
+    spd_st_t spd_st;
+
+    always_ff @(posedge user_clk_q) begin
+        if (user_reset_q) begin
+            spd_st         <= SPD_IDLE;
+            pl_dir_lnk_chg <= 2'b00;
+            pl_dir_lnk_spd <= 1'b0;
+        end else begin
+            case (spd_st)
+                // Wait for link to come up. Only trigger retrain if we
+                // negotiated Gen2 — if we're already Gen1, skip to DONE.
+                SPD_IDLE: begin
+                    if (user_lnk_up_q) begin
+                        if (cfg_lstatus[3:0] == 4'h2) begin
+                            pl_dir_lnk_chg <= 2'b01; // speed change only
+                            pl_dir_lnk_spd <= 1'b0;  // target Gen1 (2.5GT/s)
+                            spd_st         <= SPD_ASSERT;
+                        end else begin
+                            spd_st <= SPD_DONE;       // already Gen1, skip
+                        end
+                    end
+                end
+                // Hold asserted until IP confirms the directed change.
+                SPD_ASSERT: begin
+                    if (pl_dir_chg_done) begin
+                        pl_dir_lnk_chg <= 2'b00;
+                        spd_st         <= SPD_DONE;
+                    end
+                end
+                // Latch — stay here until hard reset (user_reset_q).
+                default: begin
+                    pl_dir_lnk_chg <= 2'b00;
+                    pl_dir_lnk_spd <= 1'b0;
+                end
+            endcase
+        end
+    end
 
     pcie_7x_0 u_pcie_7x (
         .pci_exp_txp              (pci_exp_txp),
@@ -130,8 +318,8 @@ module pcie_top_wrapper (
         .s_axis_tx_tlast          (s_axis_tx_tlast),
         .s_axis_tx_tuser          (s_axis_tx_tuser),
         .tx_cfg_gnt               (1'b1),
-        .tx_buf_av                (),
-        .tx_err_drop              (),
+        .tx_buf_av                (tx_buf_av),
+        .tx_err_drop              (tx_err_drop),
         .tx_cfg_req               (),
 
         .m_axis_rx_tdata          (m_axis_rx_tdata),
@@ -143,28 +331,31 @@ module pcie_top_wrapper (
         .rx_np_ok                 (1'b1),
         .rx_np_req                (1'b1),
 
-        .fc_cpld                  (),
-        .fc_cplh                  (),
-        .fc_npd                   (),
-        .fc_nph                   (),
-        .fc_pd                    (),
-        .fc_ph                    (),
-        .fc_sel                   (3'b000),
+        .fc_cpld                  (fc_cpld),
+        .fc_cplh                  (fc_cplh),
+        .fc_npd                   (fc_npd),
+        .fc_nph                   (fc_nph),
+        .fc_pd                    (fc_pd),
+        .fc_ph                    (fc_ph),
+        .fc_sel                   (3'b100),
 
         .cfg_bus_number               (cfg_bus_number),
         .cfg_device_number            (cfg_device_number),
         .cfg_function_number          (cfg_function_number),
         .cfg_dcommand                 (cfg_dcommand),
+        .cfg_command                  (cfg_command),
         .cfg_lstatus                  (cfg_lstatus),
+        .cfg_dstatus                  (cfg_dstatus),
+        .cfg_pcie_link_state          (cfg_pcie_link_state),
 
-        .cfg_mgmt_di              (mgmt_wdata),
-        .cfg_mgmt_byte_en         (mgmt_byte_en),
-        .cfg_mgmt_dwaddr          (mgmt_dwaddr),
-        .cfg_mgmt_wr_en           (mgmt_wr_en),
-        .cfg_mgmt_rd_en           (mgmt_rd_en),
+        .cfg_mgmt_di              (cfg_mgmt_di),
+        .cfg_mgmt_byte_en         (cfg_mgmt_byte_en),
+        .cfg_mgmt_dwaddr          (cfg_mgmt_dwaddr),
+        .cfg_mgmt_wr_en           (cfg_mgmt_wr_en),
+        .cfg_mgmt_rd_en           (cfg_mgmt_rd_en),
         .cfg_mgmt_wr_readonly     (1'b0),
-        .cfg_mgmt_do              (mgmt_rdata),
-        .cfg_mgmt_rd_wr_done      (mgmt_done),
+        .cfg_mgmt_do              (cfg_mgmt_do),
+        .cfg_mgmt_rd_wr_done      (cfg_mgmt_rd_wr_done),
 
         .cfg_interrupt            (cfg_interrupt),
         .cfg_interrupt_rdy        (cfg_interrupt_rdy),
@@ -174,17 +365,22 @@ module pcie_top_wrapper (
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_msixenable (cfg_interrupt_msixenable),
-        .cfg_interrupt_msixfm     (),
+        .cfg_interrupt_msixfm     (cfg_interrupt_msixfm),
         .cfg_interrupt_stat       (1'b0),
         .cfg_pciecap_interrupt_msgnum (5'h0),
+        // FLR — Function Level Reset from root complex; wire so we can self-reset
+        .cfg_received_func_lvl_rst    (cfg_received_func_lvl_rst),
 
         // cfg_vend_id/cfg_dev_id/cfg_rev_id/cfg_subsys_* are NOT external ports
         // in pcie_7x_v3_3 — IDs are baked in from CONFIG properties in vivado_build.tcl.
 
-        .cfg_pm_force_state_en    (1'b0),
+        // Windows puts this NIC in D3 after the Realtek driver fails Code 10.
+        // D3hot makes the core hold s_axis_tx_tready low, so DMA never leaves
+        // the header state. Hold D0 once the link is up, and stay out of L0s/L1.
+        .cfg_pm_force_state_en    (user_lnk_up_q),
         .cfg_pm_force_state       (2'b00),
-        .cfg_pm_halt_aspm_l0s     (1'b0),
-        .cfg_pm_halt_aspm_l1      (1'b0),
+        .cfg_pm_halt_aspm_l0s     (1'b1),
+        .cfg_pm_halt_aspm_l1      (1'b1),
         .cfg_pm_send_pme_to       (1'b0),
         .cfg_pm_wake              (1'b0),
 
@@ -209,17 +405,19 @@ module pcie_top_wrapper (
         .cfg_err_posted           (1'b0),
 
         // Defaults from the generated core for unused interfaces.
-        .cfg_trn_pending              (1'b0),
+        .cfg_trn_pending              (cfg_trn_pending),
         .cfg_turnoff_ok               (1'b0),
-        .cfg_dsn                      (64'b0),
+        .cfg_dsn                      (rtl8125b_identity_pkg::CFG_DSN),
         .cfg_ds_bus_number            (8'b0),
         .cfg_ds_device_number         (5'b0),
         .cfg_ds_function_number       (3'b0),
         .cfg_mgmt_wr_rw1c_as_rw       (1'b0),
-        .pl_directed_link_change      (2'b0),
+
+        .pl_directed_link_change      (pl_dir_lnk_chg),
         .pl_directed_link_width       (2'b0),
-        .pl_directed_link_speed       (1'b0),
+        .pl_directed_link_speed       (pl_dir_lnk_spd),
         .pl_directed_link_auton       (1'b0),
+        .pl_directed_change_done      (pl_dir_chg_done),
         .pl_upstream_prefer_deemph    (1'b1),
         .pl_transmit_hot_rst          (1'b0),
         .pl_downstream_deemph_source  (1'b0),
@@ -232,116 +430,27 @@ module pcie_top_wrapper (
 
     assign cfg_completer_id = {cfg_bus_number, cfg_device_number, cfg_function_number};
 
-    // =========================================================================
-    // BME auto-enable state machine
-    //
-    // The Realtek driver (rtcx21) fails Code 10, so Windows never writes
-    // command[2] (Bus Master Enable).  This FSM uses the Xilinx cfg_mgmt
-    // interface to read DW1 (PCI command register), OR in bits[2:0]=0x07
-    // (I/O space + mem space + bus master), and write it back.
-    //
-    // Periodic recheck (~134 ms @ 125 MHz, ~268 ms @ 62.5 MHz) catches any
-    // subsequent host CfgWr that clears BME.
-    // =========================================================================
-    typedef enum logic [2:0] {
-        BME_WAIT_LINK = 3'd0,   // wait for PCIe link
-        BME_RD_ISSUE  = 3'd1,   // issue cfg_mgmt read of DW1
-        BME_RD_WAIT   = 3'd2,   // wait for read done
-        BME_CHECK     = 3'd3,   // inspect BME bit
-        BME_WR_WAIT   = 3'd4,   // wait for write done
-        BME_IDLE      = 3'd5    // BME set; count down to next recheck
-    } bme_state_e;
-
-    bme_state_e  bme_state;
-    logic [23:0] bme_timer;
-    // 16_000_000 cycles: ~128 ms @ 125 MHz, ~256 ms @ 62.5 MHz
-    localparam logic [23:0] BME_RECHECK_CYCLES = 24'd16_000_000;
-
-    // Latch cfg_mgmt_do when the transaction completes (only valid that cycle)
+    // -----------------------------------------------------------------------
+    // FLR (Function Level Reset) handling
+    // cfg_received_func_lvl_rst is a 1-cycle pulse from the PCIe IP when the
+    // root complex issues FLR (e.g. after a Code 10 driver failure + re-enum).
+    // Stretch it to 16 user_clk cycles so the DMA engine fully drains.
+    // -----------------------------------------------------------------------
+    wire cfg_received_func_lvl_rst;
+    reg  [3:0] flr_rst_cnt;
     always_ff @(posedge user_clk_q) begin
-        if (mgmt_done && bme_state == BME_RD_WAIT)
-            mgmt_rdata_lat <= mgmt_rdata;
+        if (user_reset_q)
+            flr_rst_cnt <= 4'hF;
+        else if (cfg_received_func_lvl_rst)
+            flr_rst_cnt <= 4'hF;
+        else if (flr_rst_cnt != 4'h0)
+            flr_rst_cnt <= flr_rst_cnt - 4'h1;
     end
-
-    always_ff @(posedge user_clk_q or posedge user_reset_q) begin
-        if (user_reset_q) begin
-            bme_state    <= BME_WAIT_LINK;
-            bme_timer    <= '0;
-            mgmt_rd_en   <= 1'b0;
-            mgmt_wr_en   <= 1'b0;
-            mgmt_wdata   <= '0;
-            mgmt_byte_en <= 4'b0011;    // write bytes [1:0] — command register
-            mgmt_dwaddr  <= 10'd1;      // DW1 = offset 0x04 = PCI command register
-        end else begin
-            // Default: deassert strobes every cycle
-            mgmt_rd_en <= 1'b0;
-            mgmt_wr_en <= 1'b0;
-
-            case (bme_state)
-                BME_WAIT_LINK: begin
-                    // Hold until link trains up
-                    if (user_lnk_up_q) begin
-                        bme_timer <= 24'd64;    // 64-cycle settle after link-up
-                        bme_state <= BME_RD_ISSUE;
-                    end
-                end
-
-                BME_RD_ISSUE: begin
-                    // Count down settle delay, then pulse read enable
-                    if (bme_timer != '0) begin
-                        bme_timer <= bme_timer - 24'd1;
-                    end else begin
-                        mgmt_rd_en  <= 1'b1;
-                        mgmt_dwaddr <= 10'd1;
-                        bme_state   <= BME_RD_WAIT;
-                    end
-                end
-
-                BME_RD_WAIT: begin
-                    if (mgmt_done) bme_state <= BME_CHECK;
-                end
-
-                BME_CHECK: begin
-                    if (!mgmt_rdata_lat[2]) begin
-                        // BME not set — write command register with BME | mem | I/O
-                        mgmt_wr_en   <= 1'b1;
-                        mgmt_dwaddr  <= 10'd1;
-                        mgmt_wdata   <= mgmt_rdata_lat | 32'h0000_0007;
-                        mgmt_byte_en <= 4'b0011;
-                        bme_state    <= BME_WR_WAIT;
-                    end else begin
-                        // Already set — recheck after interval
-                        bme_timer <= BME_RECHECK_CYCLES;
-                        bme_state <= BME_IDLE;
-                    end
-                end
-
-                BME_WR_WAIT: begin
-                    if (mgmt_done) begin
-                        bme_timer <= BME_RECHECK_CYCLES;
-                        bme_state <= BME_IDLE;
-                    end
-                end
-
-                BME_IDLE: begin
-                    if (!user_lnk_up_q) begin
-                        bme_state <= BME_WAIT_LINK;
-                    end else if (bme_timer != '0) begin
-                        bme_timer <= bme_timer - 24'd1;
-                    end else begin
-                        // Recheck interval expired — re-read command register
-                        bme_state <= BME_RD_ISSUE;
-                    end
-                end
-
-                default: bme_state <= BME_WAIT_LINK;
-            endcase
-        end
-    end
+    wire endpoint_reset = user_reset_q | (flr_rst_cnt != 4'h0);
 
     pcie_custom_endpoint_top u_endpoint (
         .user_clk                 (user_clk_q),
-        .user_reset               (user_reset_q),
+        .user_reset               (endpoint_reset),
         .user_lnk_up              (user_lnk_up_q),
 
         .s_axis_tx_tdata          (s_axis_tx_tdata),
@@ -359,6 +468,7 @@ module pcie_top_wrapper (
         .m_axis_rx_tuser          (m_axis_rx_tuser),
 
         .cfg_completer_id         (cfg_completer_id),
+        .cfg_command              (cfg_command),
         .cfg_max_payload_size     (cfg_max_payload_size),
         .cfg_max_read_req_size    (cfg_max_read_req_size),
 
@@ -374,13 +484,20 @@ module pcie_top_wrapper (
         .cfg_interrupt_di         (cfg_interrupt_di),
         .cfg_interrupt_msienable  (cfg_interrupt_msienable),
         .cfg_interrupt_mmenable   (cfg_interrupt_mmenable),
+        .cfg_interrupt_msixenable (cfg_interrupt_msixenable),
+        .cfg_interrupt_msixfm     (cfg_interrupt_msixfm),
+        .tx_err_drop              (tx_err_drop),
+        .cfg_trn_pending          (cfg_trn_pending),
+        .debug_link_diag          (debug_link_diag),
+        .debug_aer                (aer_cor_status),
 
-        .ft601_clk                (ft601_clk),
-        .ft601_rst_n              (ft601_reset_release[1]),
+        .ft601_clk                (ft601_clk_buf),
+        .ft601_rst_n              (ft601_clk_lock[7]),
         .ft601_rxf_n              (ft601_rxf_n),
         .ft601_oe_n               (ft601_oe_n),
         .ft601_rd_n               (ft601_rd_n),
         .ft601_wr_n               (ft601_wr_n),
+        .ft601_siwu_n             (ft601_siwu_n),
         .ft601_txe_n              (ft601_txe_n),
         .ft601_data               (ft601_data),
         .ft601_be                 (ft601_be)

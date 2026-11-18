@@ -1,7 +1,5 @@
-// MSI-X Capability (3 DWs, cap ID 0x11). Standalone — not yet wired
-// into the chain so the existing cap walk (PM -> MSI -> PCIe) stays
-// intact. To activate, insert between MSI and PCIe and change MSI's
-// NEXT_PTR to 0x60.
+// MSI-X Capability (3 DWs, cap ID 0x11).
+// Donor: 32 vectors in BAR4, table @ 0, PBA @ 0x800, next → VPD @ 0xD0.
 
 module pci_cap_msix #(
     parameter logic [7:0]  NEXT_PTR          = 8'h70,

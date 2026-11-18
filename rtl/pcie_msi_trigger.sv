@@ -31,10 +31,10 @@ module pcie_msi_trigger #(
     output logic                     busy
 );
     // --- Source-domain stretcher ---
-    logic [NUM_VECTORS-1:0] stretched;
+    logic [NUM_VECTORS-1:0] stretched = '0;
     generate
         for (genvar v = 0; v < NUM_VECTORS; v++) begin : g_stretch
-            logic [$clog2(STRETCH_CYC+1)-1:0] cnt;
+            logic [$clog2(STRETCH_CYC+1)-1:0] cnt = '0;
             always_ff @(posedge src_clk) begin
                 if (irq_req[v]) begin
                     stretched[v] <= 1'b1;

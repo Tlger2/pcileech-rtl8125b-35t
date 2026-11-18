@@ -6,60 +6,91 @@ project that enumerates as a Realtek RTL8125B 2.5GbE NIC.
 > Target: Xilinx Artix-7 XC7A35T, Xilinx 7-Series integrated PCIe block, FT601 USB 3.0
 > device side, Vivado 2026.1.
 
-## Status (2026-11-10)
+## Status
 
-- Subsystem ID is now consistent at `0x0123` in both the Vivado IP config (`vivado_build.tcl`) and the soft header.
-- Host `ft601_client.py` offline self-test passes (opcode bijection + frame round-trip).
-- Remaining for closer 1:1 spoof: wire actual MemWr payload into `rtl8125b_bar0_regs` (currently hard-wired to 0), re-enable shadow RAM, and drive MSI from the BAR0 irq pulse. These do not require the card to implement.
-- Hardware bring-up (pinout, timing, full endpoint) still open.
+Donor identity (single source: [`rtl/rtl8125b_identity_pkg.sv`](rtl/rtl8125b_identity_pkg.sv)):
+
+- VID `10EC`, DID `8125`, Rev `05`, SVID/SSID `10EC:0123`, class `020000`
+- MAC `00:E0:4C:7A:3B:91` (DSN derived from the same MAC, also `cfg_dsn`)
+- TxConfig chip id `0x64Axxxxx` so r8169/r8125 IDs RTL8125B
+
+Done in RTL (needs a Vivado rebuild + SPI reflash + cold boot before silicon matches):
+
+- BAR2 64 KiB MAC register file takes the real MemWr payload (not hard-wired 0)
+- 64 KiB BAR2 shadow in BRAM; named r8169/r8125 offsets (MAC, TxConfig, PHYAR,
+  ERI/EPHY/OCP, ChipCmd, TxPoll, descriptor rings, FuncEvent, …)
+- MSI handshake via `pcie_msi_trigger` (held until `cfg_interrupt_rdy`)
+- MSI-X 32-vector table/PBA in BAR4; irq pulse emits a MemWr TLP when MSI-X is enabled
+- Soft config-space chain: PM `0x40` → MSI `0x50` → PCIe `0x70` → MSI-X `0xB0` → VPD `0xD0`
+- Soft ECAP chain: AER `0x100` → VC `0x148` → DSN `0x168` → TPH `0x178` → LTR `0x204` → L1PM `0x20C` → VSEC `0x21C`
+
+Still cannot be 1:1 on XC7A35T `pcie_7x`:
+
+- **I/O BAR0 (donor 256 B I/O).** 7-series IP has no I/O BAR. A 256 B *Memory* BAR0
+  Code-10s rtcx21, so BAR0 is omitted and the MAC window is BAR2 (same resource
+  map Windows assigns the onboard 8125B on this machine). Comment is at the
+  constraint site in `pci_type0_cfg_header.sv` and `vivado_build.tcl`.
+- **Gen3.** Artix-7 GTP is Gen2 x1 max. Soft PCIe cap advertises Gen2 x1.
+- **Live `cfg_ext_*`.** Vivado 2026.1 `pcie_7x` 3.3 has no `cfg_ext_*` ports, so
+  silicon ECAPs must be baked into the IP (`vivado_build.tcl`). The soft router
+  is the TB/source-of-truth copy of those DWs.
+- Full GPHY/OCP/ERI maps beyond the Flag protocol + a small stub array.
 
 ## Modules
 
 | File | Purpose |
 |---|---|
-| [rtl/ecap/pcie_ecap_router.sv](rtl/ecap/pcie_ecap_router.sv) | ECAP chain router — decodes 10-bit DW addresses ≥ 0x040 and dispatches to AER / DSN / LTR caps |
-| [rtl/ecap/pcie_ecap_aer.sv](rtl/ecap/pcie_ecap_aer.sv) | AER Extended Capability (ECAP ID 0x0001, ver 2) — 11 DWs at 0x100, RTL8125B severity defaults |
-| [rtl/ecap/pcie_ecap_dsn.sv](rtl/ecap/pcie_ecap_dsn.sv) | Device Serial Number (ECAP ID 0x0003, ver 1) — 3 DWs at 0x150, serial derived from MAC_ADDR |
-| [rtl/ecap/pcie_ecap_ltr.sv](rtl/ecap/pcie_ecap_ltr.sv) | Latency Tolerance Reporting (ECAP ID 0x0018, ver 1) — 2 DWs at 0x160, 3.2 µs default, end of chain |
-| [rtl/opcode_scramble_pkg.sv](rtl/opcode_scramble_pkg.sv) | 8-bit opcode substitution LUT (host↔wire, bijective) — legacy, superseded by the crypto path when `secure_session_fsm` is wired in |
+| [rtl/rtl8125b_identity_pkg.sv](rtl/rtl8125b_identity_pkg.sv) | Donor VID/DID/rev/SSID/MAC/DSN/BAR/cap pointers |
+| [rtl/rtl8125b_bar0_regs.sv](rtl/rtl8125b_bar0_regs.sv) | MAC MMIO (BAR2 64 KiB), PHYAR/ERI/OCP, irq pulse |
+| [rtl/ecap/pcie_ecap_router.sv](rtl/ecap/pcie_ecap_router.sv) | ECAP chain router (AER/VC/DSN/TPH/LTR/L1PM/VSEC) |
+| [rtl/ecap/pcie_ecap_aer.sv](rtl/ecap/pcie_ecap_aer.sv) | AER Extended Capability (ECAP ID 0x0001, ver 2) |
+| [rtl/ecap/pcie_ecap_vc.sv](rtl/ecap/pcie_ecap_vc.sv) | Virtual Channel (ECAP ID 0x0002) at 0x148 |
+| [rtl/ecap/pcie_ecap_dsn.sv](rtl/ecap/pcie_ecap_dsn.sv) | Device Serial Number (ECAP ID 0x0003), MAC-derived |
+| [rtl/ecap/pcie_ecap_tph.sv](rtl/ecap/pcie_ecap_tph.sv) | TPH Requester (ECAP ID 0x0017) at 0x178 |
+| [rtl/ecap/pcie_ecap_ltr.sv](rtl/ecap/pcie_ecap_ltr.sv) | LTR (ECAP ID 0x0018) at 0x204 |
+| [rtl/ecap/pcie_ecap_l1pm.sv](rtl/ecap/pcie_ecap_l1pm.sv) | L1 PM Substates (ECAP ID 0x001E) at 0x20C |
+| [rtl/ecap/pcie_ecap_vsec.sv](rtl/ecap/pcie_ecap_vsec.sv) | Vendor-Specific ECAP (ID 0x000B) at 0x21C |
+| [rtl/caps/pci_cap_vpd.sv](rtl/caps/pci_cap_vpd.sv) | VPD capability at 0xD0 |
+| [rtl/opcode_scramble_pkg.sv](rtl/opcode_scramble_pkg.sv) | 8-bit opcode substitution LUT (host↔wire, bijective) |
 | [rtl/crypto/chacha20_core.sv](rtl/crypto/chacha20_core.sv) | ChaCha20 block cipher, 20 rounds, 64-byte keystream block |
 | [rtl/crypto/trng_ring_osc.sv](rtl/crypto/trng_ring_osc.sv) | Ring-oscillator TRNG for ephemeral handshake nonces |
-| [rtl/crypto/secure_session_fsm.sv](rtl/crypto/secure_session_fsm.sv) | PSK-rooted mutual-auth handshake (CLIENT_HELLO → SERVER_CHALLENGE → CLIENT_RESPONSE → SERVER_ACK) with session-key derivation |
-| [rtl/crypto/secure_frame_enc.sv](rtl/crypto/secure_frame_enc.sv) | Data-plane ChaCha20 wrapper — encrypts outbound command/response frames per session |
+| [rtl/crypto/secure_session_fsm.sv](rtl/crypto/secure_session_fsm.sv) | PSK-rooted mutual-auth handshake |
+| [rtl/crypto/secure_frame_enc.sv](rtl/crypto/secure_frame_enc.sv) | Data-plane ChaCha20 wrapper |
 | [rtl/tlp_dw0_decoder.sv](rtl/tlp_dw0_decoder.sv) | Parse PCIe TLP header DW0 (Fmt / Type / TC / Length) |
 | [rtl/tlp_rid_tag_be_decoder.sv](rtl/tlp_rid_tag_be_decoder.sv) | Parse TLP DW1 (Requester ID / Tag / Byte Enables) |
 | [rtl/tlp_addr_decoder.sv](rtl/tlp_addr_decoder.sv) | Extract memory address from DW2/DW3 (3-DW & 4-DW headers) |
 | [rtl/tlp_cpld_header_fmt.sv](rtl/tlp_cpld_header_fmt.sv) | Build the three header DWs of a Completion with Data (CplD) |
 | [rtl/pcie_cpld_axis_tx_mux.sv](rtl/pcie_cpld_axis_tx_mux.sv) | 64-bit AXI-Stream TX mux that packs CplD header + N-DW payload |
 | [rtl/pcie_msi_trigger.sv](rtl/pcie_msi_trigger.sv) | MSI request generator with CDC sync, pulse stretch, vector masking |
+| [rtl/msix_table_pba.sv](rtl/msix_table_pba.sv) | MSI-X table + PBA in BAR4 (32 vectors, PBA at 0x800) |
+| [rtl/msix_mwr_tx.sv](rtl/msix_mwr_tx.sv) | MSI-X Memory Write TLP generator |
 | [rtl/ft601_cmd_parser.sv](rtl/ft601_cmd_parser.sv) | Parse command frames from the FT601 FIFO and drive a register file |
 | [rtl/ft601_resp_packager.sv](rtl/ft601_resp_packager.sv) | Frame read results / status into response packets for the FT601 TX FIFO |
-| [rtl/pcie_top_wrapper.sv](rtl/pcie_top_wrapper.sv) | Top-level that instantiates `pcie_7x_0` and the custom endpoint, with GT REFCLK + PERST# routing |
-| [tb/tb_endpoint.sv](tb/tb_endpoint.sv) | Self-checking XSim testbench — parser frames + CplD TX mux beat stream |
+| [rtl/pcie_top_wrapper.sv](rtl/pcie_top_wrapper.sv) | Top-level that instantiates `pcie_7x_0` and the custom endpoint |
+| [tb/tb_endpoint.sv](tb/tb_endpoint.sv) | Self-checking TB — parser, CplD mux, cap/ECAP walk, BAR2/BAR4, MAC regs |
 | [host/ft601_client.py](host/ft601_client.py) | Python host-side driver (pyftdi) for the FT601 framed protocol |
-| [rtl/pci_type0_cfg_header.sv](rtl/pci_type0_cfg_header.sv) | PCI Type 0 configuration space header (RTL8125B identity, BARs, Command/Status) |
-| [rtl/pci_cfg_space.sv](rtl/pci_cfg_space.sv) | Config-space router: header + PM/MSI/PCIe cap chain, with stub/full selector |
-| [rtl/caps/pci_cap_pm.sv](rtl/caps/pci_cap_pm.sv) | PCI Power Management Capability (full, host-writable PMCSR) |
-| [rtl/caps/pci_cap_msi.sv](rtl/caps/pci_cap_msi.sv) | MSI Capability (full, 64-bit addr, 8 vectors) |
-| [rtl/caps/pci_cap_pcie.sv](rtl/caps/pci_cap_pcie.sv) | PCIe Capability v2 (full, Endpoint, MPS/MRRS host-writable) |
-| [rtl/caps/pci_cap_pm_stub.sv](rtl/caps/pci_cap_pm_stub.sv) | PM Cap enumeration stub (read-only) |
-| [rtl/caps/pci_cap_msi_stub.sv](rtl/caps/pci_cap_msi_stub.sv) | MSI Cap enumeration stub (read-only) |
-| [rtl/caps/pci_cap_pcie_stub.sv](rtl/caps/pci_cap_pcie_stub.sv) | PCIe Cap enumeration stub (read-only) |
-| [rtl/pcie_bar_decoder.sv](rtl/pcie_bar_decoder.sv) | BAR aperture match + Memory Space Enable (MSE) enforcement |
+| [rtl/pci_type0_cfg_header.sv](rtl/pci_type0_cfg_header.sv) | PCI Type 0 header (RTL8125B identity, BAR2+BAR4 64-bit) |
+| [rtl/pci_cfg_space.sv](rtl/pci_cfg_space.sv) | Config-space router: header + PM/MSI/PCIe/MSI-X/VPD |
+| [rtl/caps/pci_cap_pm.sv](rtl/caps/pci_cap_pm.sv) | PCI Power Management Capability (D1+D2, PME, Aux 375 mA) |
+| [rtl/caps/pci_cap_msi.sv](rtl/caps/pci_cap_msi.sv) | MSI Capability (64-bit, maskable, 1 vector) |
+| [rtl/caps/pci_cap_pcie.sv](rtl/caps/pci_cap_pcie.sv) | PCIe Capability v2 (Endpoint, Gen2 x1, LTR in Dev Cap 2) |
+| [rtl/caps/pci_cap_msix.sv](rtl/caps/pci_cap_msix.sv) | MSI-X Capability (32 vec, BAR4, PBA 0x800) |
+| [rtl/pcie_bar_decoder.sv](rtl/pcie_bar_decoder.sv) | BAR2/BAR4 aperture match + Memory Space Enable |
 
 ## Configuration space layout
 
 ```
-0x00 .. 0x3F : Type 0 header   (VID/DID, Command, Status, BARs, Cap Ptr=0x40)
+0x00 .. 0x3F : Type 0 header   (VID/DID, Command, Status, BAR2+BAR4, Cap Ptr=0x40)
 0x40 .. 0x47 : PM Cap          (Cap ID 0x01, Next 0x50)
-0x50 .. 0x5F : MSI Cap         (Cap ID 0x05, Next 0x70, 64-bit addr)
-0x70 .. 0xAB : PCIe Cap v2     (Cap ID 0x10, Next 0x00, Endpoint)
+0x50 .. 0x67 : MSI Cap         (Cap ID 0x05, Next 0x70, 64-bit + mask)
+0x70 .. 0xAB : PCIe Cap v2     (Cap ID 0x10, Next 0xB0, Endpoint)
+0xB0 .. 0xBB : MSI-X Cap       (Cap ID 0x11, Next 0xD0, 32 vec in BAR4)
+0xD0 .. 0xD7 : VPD Cap         (Cap ID 0x03, Next 0x00)
 ```
 
-Capability chain walks cleanly through Windows and Linux PCI enumeration.
-Use the full caps when the host needs to configure MSI vectors / MPS / power
-state; use the stubs for bring-up or testbench runs where only the chain
-topology matters. Swap via `pci_cfg_space #(.USE_CAP_STUBS(1))`.
+BAR0 is unused on this part (see Status). Silicon identity is also programmed
+into `pcie_7x_0` by `vivado_build.tcl` — the soft header is for TB and any
+soft-endpoint path.
 
 ## Command/response frame format
 
@@ -77,16 +108,22 @@ for every defined `X`).
 ## Hardware
 
 - **Board:** CaptainDMA 35T (XC7A35T FGG484 + FTDI FT601 USB 3.0 bridge)
-- **Spoof target:** Realtek RTL8125B 2.5GbE NIC
-  - VID `0x10EC`, DID `0x8125`, Class `0x020000`, Rev `0x36`
+- **Spoof target:** Realtek RTL8125B 2.5GbE NIC, donor `10EC:0123` rev `05`
+  - VID `0x10EC`, DID `0x8125`, Class `0x020000`, Rev `0x05`
   - Subsys VID `0x10EC`, SSID `0x0123`
-  - PCIe Gen2 x1, BAR0 64 KB 64-bit prefetchable, BAR1 4 KB
+  - PCIe Gen2 x1 advertised (core often runs Gen1 after directed retrain)
+  - BAR2 64 KB 64-bit non-prefetchable (MAC), BAR4 16 KB 64-bit npref (MSI-X)
+  - Donor I/O 256 B BAR0 is omitted (7-series IP limit)
 
 ## Build notes
 
 These modules target the Xilinx 7-Series PCIe integrated block on an XC7A35T. The
 AXI-Stream TX mux assumes the 64-bit `s_axis_tx` interface (Gen2 x1 default); port
 to 128-bit by packing 4 DWs per beat with the same state-machine shape.
+
+RTL identity/BAR/MSI changes are **not** in the currently flashed bitstream until
+`vivado_build.tcl` is re-run, the SPI image is reflashed, and the host does a
+cold boot.
 
 ## License
 

@@ -1,7 +1,7 @@
 // lang: SystemVerilog, file: pcie_ecap_ltr.sv, target: Xilinx Artix-7 XC7A35T, Vivado 2026.1
 // PCI Express Extended Capability — Latency Tolerance Reporting (LTR).
 // ECAP ID 0x0018, version 1.  2 DWs (header + LTR register), byte range 0x160..0x164.
-// End of the extended cap chain: NEXT_CAP_OFFSET = 0x000.
+// Donor next → L1PM at 0x20C.
 //
 // LTR register layout (PCIe base spec 4.0 §7.8.26):
 //   [15:0]  Max Snoop Latency    — { 1'b0, scale[2:0], value[9:0] }
@@ -20,7 +20,7 @@
 // INTEGRATION: same as pcie_ecap_aer.sv.
 
 module pcie_ecap_ltr #(
-    parameter logic [11:0] NEXT_CAP_OFFSET = 12'h000,     // end of chain
+    parameter logic [11:0] NEXT_CAP_OFFSET = 12'h20C,     // → L1PM at 0x20C
     // scale=001 (32 ns), value=100 → 3200 ns
     parameter logic [15:0] SNOOP_LAT_RST   = 16'h0464,
     parameter logic [15:0] NOSNOOP_LAT_RST = 16'h0464

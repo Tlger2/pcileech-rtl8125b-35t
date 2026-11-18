@@ -24,7 +24,7 @@
 //      drive cap_rd_en / cap_wr_en from the decoded config address.
 
 module pcie_ecap_aer #(
-    parameter logic [11:0] NEXT_CAP_OFFSET  = 12'h150,     // → DSN at 0x150
+    parameter logic [11:0] NEXT_CAP_OFFSET  = 12'h148,     // → VC at 0x148
     // RTL8125B-matched severity defaults
     parameter logic [31:0] UNCERRSEV_RST    = 32'h0006_2030,
     parameter logic [31:0] CORRERRMSK_RST   = 32'h0000_31C1
