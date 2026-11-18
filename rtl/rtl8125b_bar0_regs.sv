@@ -49,6 +49,7 @@ module rtl8125b_bar0_regs
     localparam int OFF_RXCONFIG   = 8'h44;
     localparam int OFF_TIMERINT   = 8'h48;
     localparam int OFF_RXMISSED   = 8'h4C;
+    localparam int OFF_TIMEINT2   = 8'h58;
     localparam int OFF_CFG9346    = 8'h50;
     localparam int OFF_CONFIG0    = 8'h51;
     localparam int OFF_CONFIG1    = 8'h52;
@@ -57,16 +58,22 @@ module rtl8125b_bar0_regs
     localparam int OFF_CONFIG4    = 8'h55;
     localparam int OFF_CONFIG5    = 8'h56;
     localparam int OFF_PHYAR      = 8'h60;
+    localparam int OFF_CSIDR      = 8'h64;
+    localparam int OFF_CSIAR      = 8'h68;
     localparam int OFF_PHYSTATUS  = 8'h6C;
+    localparam int OFF_GPIO       = 8'h6E;
+    localparam int OFF_PMCH       = 8'h6F;
     localparam int OFF_ERIDR      = 8'h70;
     localparam int OFF_ERIAR      = 8'h74;
     localparam int OFF_EPHYAR     = 8'h80;
     localparam int OFF_OCPDR      = 8'hB0;
     localparam int OFF_OCPAR      = 8'hB4;
+    localparam int OFF_GPHY_OCP   = 8'hB8;
     localparam int OFF_CPLUSCMD   = 8'hE0;
     localparam int OFF_RXMAXSIZE  = 8'hDA;
     localparam int OFF_RDSAR_LO   = 8'hE4;
     localparam int OFF_RDSAR_HI   = 8'hE8;
+    localparam int OFF_MTPS       = 8'hEC;
     localparam int OFF_FUNCEVENT  = 8'hF0;
 
     localparam logic [7:0] CMD_RESET  = 8'h10;
@@ -87,14 +94,22 @@ module rtl8125b_bar0_regs
     logic [15:0] intrmask_q, intrstatus_q;
     logic [31:0] txconfig_q, rxconfig_q, phyar_q, cpluscmd_q;
     logic [31:0] eridr_q, eriar_q, ephyar_q, ocpdr_q, ocpar_q;
-    logic [31:0] eri_mem [0:7];   // 8-entry stub — EAC checks flag protocol, not depth
-    logic [15:0] ocp_mem [0:7];
+    logic [31:0] csidr_q, csiar_q, gphy_ocp_q, timeint2_q, mtps_q;
+    logic [7:0]  macdbg_q, gpio_q, pmch_q;
+    // Flag-protocol stubs — not a full GPHY/ERI/OCP map.
+    logic [31:0] eri_mem [0:63];
+    logic [31:0] csi_mem [0:63];
+    logic [15:0] ocp_mem [0:63];
     logic [15:0] ephy_mem [0:31];
+    logic [15:0] gphy_ocp_mem [0:31];
     logic [4:0]  eri_timer_q, ephy_timer_q, ocp_timer_q;
+    logic [4:0]  csi_timer_q, gphy_ocp_timer_q;
     logic        eri_pending_q, ephy_pending_q, ocp_pending_q;
+    logic        csi_pending_q, gphy_ocp_pending_q;
     logic        eri_is_write_q, ephy_is_write_q, ocp_is_write_q;
-    logic [7:0]  eri_idx_q, ocp_idx_q;
-    logic [4:0]  ephy_reg_q;
+    logic        csi_is_write_q, gphy_ocp_is_write_q;
+    logic [5:0]  eri_idx_q, ocp_idx_q, csi_idx_q;
+    logic [4:0]  ephy_reg_q, gphy_ocp_reg_q;
     logic [15:0] rxmaxsize_q;
     logic [31:0] tnpds_lo_q, tnpds_hi_q, rdsar_lo_q, rdsar_hi_q;
     logic [31:0] tally_lo_q, tally_hi_q, thpds_lo_q, thpds_hi_q;
@@ -138,14 +153,18 @@ module rtl8125b_bar0_regs
         (byte_off[7:1] == OFF_INTRSTATUS[7:1]) ||
         (byte_off >= OFF_TXCONFIG && byte_off <= OFF_RXMISSED+3) ||
         (byte_off >= OFF_CFG9346 && byte_off <= OFF_CONFIG5) ||
+        (byte_off >= OFF_TIMEINT2 && byte_off <= OFF_TIMEINT2+3) ||
         (byte_off >= OFF_PHYAR && byte_off <= OFF_PHYAR+3) ||
-        (byte_off == OFF_PHYSTATUS) ||
+        (byte_off >= OFF_CSIDR && byte_off <= OFF_CSIAR+3) ||
+        (byte_off >= OFF_PHYSTATUS && byte_off <= OFF_PMCH) ||
         (byte_off >= OFF_ERIDR && byte_off <= OFF_ERIAR+3) ||
         (byte_off >= OFF_EPHYAR && byte_off <= OFF_EPHYAR+3) ||
         (byte_off >= OFF_OCPDR && byte_off <= OFF_OCPAR+3) ||
+        (byte_off >= OFF_GPHY_OCP && byte_off <= OFF_GPHY_OCP+3) ||
         (byte_off >= OFF_CPLUSCMD && byte_off <= OFF_CPLUSCMD+3) ||
         (byte_off >= OFF_RXMAXSIZE && byte_off <= OFF_RXMAXSIZE+1) ||
         (byte_off >= OFF_RDSAR_LO && byte_off <= OFF_RDSAR_HI+3) ||
+        (byte_off >= OFF_MTPS && byte_off <= OFF_MTPS+3) ||
         (byte_off >= OFF_FUNCEVENT && byte_off <= OFF_FUNCEVENT+15)
     );
 
@@ -249,6 +268,10 @@ module rtl8125b_bar0_regs
                 named_hit   = 1'b1;
                 named_rdata = rxmissed_q;
             end
+            14'h016: begin  // 0x58 TimeInt2
+                named_hit   = 1'b1;
+                named_rdata = timeint2_q;
+            end
             14'h014: begin  // 0x50 Cfg9346 + Config0..2
                 named_hit   = 1'b1;
                 named_rdata = {config2_q, config1_q, config0_q, cfg9346_q};
@@ -261,9 +284,17 @@ module rtl8125b_bar0_regs
                 named_hit   = 1'b1;
                 named_rdata = phyar_q;
             end
-            14'h01B: begin  // 0x6C PHYstatus
+            14'h019: begin  // 0x64 CSIDR
                 named_hit   = 1'b1;
-                named_rdata = {24'h0, phystatus};
+                named_rdata = csidr_q;
+            end
+            14'h01A: begin  // 0x68 CSIAR
+                named_hit   = 1'b1;
+                named_rdata = csiar_q;
+            end
+            14'h01B: begin  // 0x6C PHYstatus, 0x6D MACDBG, 0x6E GPIO, 0x6F PMCH
+                named_hit   = 1'b1;
+                named_rdata = {pmch_q, gpio_q, macdbg_q, phystatus};
             end
             14'h01C: begin  // 0x70 ERIDR
                 named_hit   = 1'b1;
@@ -285,6 +316,10 @@ module rtl8125b_bar0_regs
                 named_hit   = 1'b1;
                 named_rdata = ocpar_q;
             end
+            14'h02E: begin  // 0xB8 GPHY_OCP (flag protocol, not a full GPHY)
+                named_hit   = 1'b1;
+                named_rdata = gphy_ocp_q;
+            end
             14'h036: begin  // 0xD8: RxMaxSize at 0xDA
                 named_hit   = 1'b1;
                 named_rdata = {rxmaxsize_q, 16'h0};
@@ -300,6 +335,10 @@ module rtl8125b_bar0_regs
             14'h03A: begin
                 named_hit   = 1'b1;
                 named_rdata = rdsar_hi_q;
+            end
+            14'h03B: begin  // 0xEC MTPS
+                named_hit   = 1'b1;
+                named_rdata = mtps_q;
             end
             14'h03C: begin
                 named_hit   = 1'b1;
@@ -387,24 +426,43 @@ module rtl8125b_bar0_regs
             ephyar_q       <= 32'h0;
             ocpdr_q        <= 32'h0;
             ocpar_q        <= 32'h0;
+            csidr_q        <= 32'h0;
+            csiar_q        <= 32'h0;
+            gphy_ocp_q     <= 32'h0;
+            timeint2_q     <= 32'h0;
+            mtps_q         <= 32'h0000_000C;
+            macdbg_q       <= 8'h00;
+            gpio_q         <= 8'h00;
+            pmch_q         <= 8'h00;
             eri_timer_q    <= '0;
             ephy_timer_q   <= '0;
             ocp_timer_q    <= '0;
+            csi_timer_q    <= '0;
+            gphy_ocp_timer_q <= '0;
             eri_pending_q  <= 1'b0;
             ephy_pending_q <= 1'b0;
             ocp_pending_q  <= 1'b0;
+            csi_pending_q  <= 1'b0;
+            gphy_ocp_pending_q <= 1'b0;
             eri_is_write_q <= 1'b0;
             ephy_is_write_q<= 1'b0;
             ocp_is_write_q <= 1'b0;
+            csi_is_write_q <= 1'b0;
+            gphy_ocp_is_write_q <= 1'b0;
             eri_idx_q      <= '0;
             ocp_idx_q      <= '0;
+            csi_idx_q      <= '0;
             ephy_reg_q     <= '0;
-            for (int e = 0; e < 8; e++) begin
+            gphy_ocp_reg_q <= '0;
+            for (int e = 0; e < 64; e++) begin
                 eri_mem[e] <= 32'h0;
+                csi_mem[e] <= 32'h0;
                 ocp_mem[e] <= 16'h0;
             end
-            for (int ep = 0; ep < 32; ep++)
-                ephy_mem[ep] <= 16'h0;
+            for (int ep = 0; ep < 32; ep++) begin
+                ephy_mem[ep]      <= 16'h0;
+                gphy_ocp_mem[ep]  <= 16'h0;
+            end
         end else begin
             mem_rvalid <= mem_rd_en;
             irq_pulse  <= 1'b0;
@@ -424,7 +482,7 @@ module rtl8125b_bar0_regs
                 end
             end
 
-            // PHYAR / ERI / EPHY / OCP: Flag clears on write, sets on read
+            // PHYAR / CSI / ERI / EPHY / OCP / GPHY_OCP: Flag clears on write, sets on read
             if (phy_pending_q) begin
                 if (phy_timer_q != 0)
                     phy_timer_q <= phy_timer_q - 1'b1;
@@ -445,10 +503,10 @@ module rtl8125b_bar0_regs
                 else begin
                     eri_pending_q <= 1'b0;
                     if (eri_is_write_q) begin
-                        eri_mem[eri_idx_q[2:0]] <= eridr_q;
+                        eri_mem[eri_idx_q] <= eridr_q;
                         eriar_q[31]        <= 1'b0;
                     end else begin
-                        eridr_q            <= eri_mem[eri_idx_q[2:0]];
+                        eridr_q            <= eri_mem[eri_idx_q];
                         eriar_q[31]        <= 1'b1;
                     end
                 end
@@ -473,11 +531,39 @@ module rtl8125b_bar0_regs
                 else begin
                     ocp_pending_q <= 1'b0;
                     if (ocp_is_write_q) begin
-                        ocp_mem[ocp_idx_q[2:0]] <= ocpdr_q[15:0];
+                        ocp_mem[ocp_idx_q] <= ocpdr_q[15:0];
                         ocpar_q[31]        <= 1'b0;
                     end else begin
-                        ocpdr_q[15:0]      <= ocp_mem[ocp_idx_q[2:0]];
+                        ocpdr_q[15:0]      <= ocp_mem[ocp_idx_q];
                         ocpar_q[31]        <= 1'b1;
+                    end
+                end
+            end
+            if (csi_pending_q) begin
+                if (csi_timer_q != 0)
+                    csi_timer_q <= csi_timer_q - 1'b1;
+                else begin
+                    csi_pending_q <= 1'b0;
+                    if (csi_is_write_q) begin
+                        csi_mem[csi_idx_q] <= csidr_q;
+                        csiar_q[31]        <= 1'b0;
+                    end else begin
+                        csidr_q            <= csi_mem[csi_idx_q];
+                        csiar_q[31]        <= 1'b1;
+                    end
+                end
+            end
+            if (gphy_ocp_pending_q) begin
+                if (gphy_ocp_timer_q != 0)
+                    gphy_ocp_timer_q <= gphy_ocp_timer_q - 1'b1;
+                else begin
+                    gphy_ocp_pending_q <= 1'b0;
+                    if (gphy_ocp_is_write_q) begin
+                        gphy_ocp_mem[gphy_ocp_reg_q] <= gphy_ocp_q[15:0];
+                        gphy_ocp_q[31]               <= 1'b0;
+                    end else begin
+                        gphy_ocp_q[15:0]             <= gphy_ocp_mem[gphy_ocp_reg_q];
+                        gphy_ocp_q[31]               <= 1'b1;
                     end
                 end
             end
@@ -619,6 +705,12 @@ module rtl8125b_bar0_regs
                             if (mem_be[2]) config5_q <= mem_wdata[23:16];
                         end
                     end
+                    14'h016: begin  // 0x58 TimeInt2
+                        if (mem_be[0]) timeint2_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) timeint2_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) timeint2_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) timeint2_q[31:24] <= mem_wdata[31:24];
+                    end
                     14'h018: begin
                         if (mem_be[0]) phyar_q[7:0]   <= mem_wdata[7:0];
                         if (mem_be[1]) phyar_q[15:8]  <= mem_wdata[15:8];
@@ -635,13 +727,37 @@ module rtl8125b_bar0_regs
                             phyar_q[31]    <= mem_wdata[31];
                         end
                     end
+                    14'h019: begin  // CSIDR
+                        if (mem_be[0]) csidr_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) csidr_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) csidr_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) csidr_q[31:24] <= mem_wdata[31:24];
+                    end
+                    14'h01A: begin  // CSIAR Flag=bit31, 64-entry stub
+                        if (mem_be[0]) csiar_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) csiar_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) csiar_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) csiar_q[31:24] <= mem_wdata[31:24];
+                        if (mem_be[3] || mem_be[2]) begin
+                            csi_pending_q  <= 1'b1;
+                            csi_timer_q    <= 5'd12;
+                            csi_is_write_q <= mem_wdata[31];
+                            csi_idx_q      <= mem_wdata[7:2];
+                            csiar_q[31]    <= mem_wdata[31];
+                        end
+                    end
+                    14'h01B: begin  // PHYstatus RO; MACDBG/GPIO/PMCH RW
+                        if (mem_be[1]) macdbg_q <= mem_wdata[15:8];
+                        if (mem_be[2]) gpio_q   <= mem_wdata[23:16];
+                        if (mem_be[3]) pmch_q   <= mem_wdata[31:24];
+                    end
                     14'h01C: begin  // ERIDR
                         if (mem_be[0]) eridr_q[7:0]   <= mem_wdata[7:0];
                         if (mem_be[1]) eridr_q[15:8]  <= mem_wdata[15:8];
                         if (mem_be[2]) eridr_q[23:16] <= mem_wdata[23:16];
                         if (mem_be[3]) eridr_q[31:24] <= mem_wdata[31:24];
                     end
-                    14'h01D: begin  // ERIAR Flag=bit31, addr[11:2] -> 256-entry
+                    14'h01D: begin  // ERIAR Flag=bit31, 64-entry stub
                         if (mem_be[0]) eriar_q[7:0]   <= mem_wdata[7:0];
                         if (mem_be[1]) eriar_q[15:8]  <= mem_wdata[15:8];
                         if (mem_be[2]) eriar_q[23:16] <= mem_wdata[23:16];
@@ -650,7 +766,7 @@ module rtl8125b_bar0_regs
                             eri_pending_q  <= 1'b1;
                             eri_timer_q    <= 5'd12;
                             eri_is_write_q <= mem_wdata[31];
-                            eri_idx_q      <= mem_wdata[11:4];
+                            eri_idx_q      <= mem_wdata[9:4];
                             eriar_q[31]    <= mem_wdata[31];
                         end
                     end
@@ -682,8 +798,21 @@ module rtl8125b_bar0_regs
                             ocp_pending_q  <= 1'b1;
                             ocp_timer_q    <= 5'd12;
                             ocp_is_write_q <= mem_wdata[31];
-                            ocp_idx_q      <= mem_wdata[9:2];
+                            ocp_idx_q      <= mem_wdata[7:2];
                             ocpar_q[31]    <= mem_wdata[31];
+                        end
+                    end
+                    14'h02E: begin  // GPHY_OCP Flag=bit31, 32-entry stub (not a full GPHY)
+                        if (mem_be[0]) gphy_ocp_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) gphy_ocp_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) gphy_ocp_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) gphy_ocp_q[31:24] <= mem_wdata[31:24];
+                        if (mem_be[3] || mem_be[2]) begin
+                            gphy_ocp_pending_q  <= 1'b1;
+                            gphy_ocp_timer_q    <= 5'd12;
+                            gphy_ocp_is_write_q <= mem_wdata[31];
+                            gphy_ocp_reg_q      <= mem_wdata[20:16];
+                            gphy_ocp_q[31]      <= mem_wdata[31];
                         end
                     end
                     14'h036: begin
@@ -707,6 +836,12 @@ module rtl8125b_bar0_regs
                         if (mem_be[1]) rdsar_hi_q[15:8]  <= mem_wdata[15:8];
                         if (mem_be[2]) rdsar_hi_q[23:16] <= mem_wdata[23:16];
                         if (mem_be[3]) rdsar_hi_q[31:24] <= mem_wdata[31:24];
+                    end
+                    14'h03B: begin  // 0xEC MTPS
+                        if (mem_be[0]) mtps_q[7:0]   <= mem_wdata[7:0];
+                        if (mem_be[1]) mtps_q[15:8]  <= mem_wdata[15:8];
+                        if (mem_be[2]) mtps_q[23:16] <= mem_wdata[23:16];
+                        if (mem_be[3]) mtps_q[31:24] <= mem_wdata[31:24];
                     end
                     14'h03C: begin
                         if (mem_be[0]) funcevent_q[7:0]   <= mem_wdata[7:0];

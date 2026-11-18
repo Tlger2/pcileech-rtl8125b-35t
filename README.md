@@ -14,11 +14,14 @@ Donor identity (single source: [`rtl/rtl8125b_identity_pkg.sv`](rtl/rtl8125b_ide
 - MAC `00:E0:4C:7A:3B:91` (DSN derived from the same MAC, also `cfg_dsn`)
 - TxConfig chip id `0x64Axxxxx` so r8169/r8125 IDs RTL8125B
 
-Done in RTL (needs a Vivado rebuild + SPI reflash + cold boot before silicon matches):
+Done in RTL (needs a Vivado rebuild + SPI reflash + **cold boot** before silicon matches):
 
 - BAR2 64 KiB MAC register file takes the real MemWr payload (not hard-wired 0)
-- 64 KiB BAR2 shadow in BRAM; named r8169/r8125 offsets (MAC, TxConfig, PHYAR,
-  ERI/EPHY/OCP, ChipCmd, TxPoll, descriptor rings, FuncEvent, …)
+- 64 KiB BAR2 shadow in BRAM; named r8169/r8125/rt640x64 offsets (MAC, TxConfig,
+  PHYAR, CSI, ERI/EPHY/OCP/GPHY_OCP Flag protocol, ChipCmd, TxPoll TOK irq,
+  descriptor rings, TimeInt2, MTPS, FuncEvent, …)
+- Completer ID is the last non-zero `cfg_completer_id` (debug 0x20=effective,
+  0x34=raw). No hardcoded `FALLBACK_BDF=0x0500`.
 - MSI handshake via `pcie_msi_trigger` (held until `cfg_interrupt_rdy`)
 - MSI-X 32-vector table/PBA in BAR4; irq pulse emits a MemWr TLP when MSI-X is enabled
 - Soft config-space chain: PM `0x40` → MSI `0x50` → PCIe `0x70` → MSI-X `0xB0` → VPD `0xD0`
@@ -34,7 +37,11 @@ Still cannot be 1:1 on XC7A35T `pcie_7x`:
 - **Live `cfg_ext_*`.** Vivado 2026.1 `pcie_7x` 3.3 has no `cfg_ext_*` ports, so
   silicon ECAPs must be baked into the IP (`vivado_build.tcl`). The soft router
   is the TB/source-of-truth copy of those DWs.
-- Full GPHY/OCP/ERI maps beyond the Flag protocol + a small stub array.
+- Full GPHY/OCP/ERI/CSI maps beyond the Flag protocol + a small stub array.
+- Onboard SSID `1043:87D7` rev `04` — PnP confirmed, but config-space
+  cap/ECAP DWs were not dumped, so silicon stays `10EC:0123` rev `05`
+  (working Null rtcx21 bind). Do not invent SSIDs.
+- SRAM-only reload zeros the completer-ID latch; CplD/DMA still need cold boot.
 
 ## Modules
 
@@ -108,6 +115,7 @@ for every defined `X`).
 ## Hardware
 
 - **Board:** CaptainDMA 35T (XC7A35T FGG484 + FTDI FT601 USB 3.0 bridge)
+- **SPI flash:** ISSI IS25LP032 (32 Mbit), not Winbond W25Q64
 - **Spoof target:** Realtek RTL8125B 2.5GbE NIC, donor `10EC:0123` rev `05`
   - VID `0x10EC`, DID `0x8125`, Class `0x020000`, Rev `0x05`
   - Subsys VID `0x10EC`, SSID `0x0123`
@@ -122,8 +130,14 @@ AXI-Stream TX mux assumes the 64-bit `s_axis_tx` interface (Gen2 x1 default); po
 to 128-bit by packing 4 DWs per beat with the same state-machine shape.
 
 RTL identity/BAR/MSI changes are **not** in the currently flashed bitstream until
-`vivado_build.tcl` is re-run, the SPI image is reflashed, and the host does a
-cold boot.
+`vivado_build.tcl` is re-run, the SPI image is reflashed with OFL's
+`spiOverJtag_xc7a35tfgg484` (not `tools/bscan_spi_xc7a35t.bit`), and the host
+does a **cold boot**. SRAM-only (`-m`) does not re-enumerate CplD/DMA.
+
+```
+C:\msys64\ucrt64\bin\openFPGALoader.exe -c ft4232 --fpga-part xc7a35tfgg484 -f --verify --unprotect-flash pcie_top_wrapper.bit
+C:\msys64\ucrt64\bin\openFPGALoader.exe -c ft4232 --fpga-part xc7a35tfgg484 -m pcie_top_wrapper.bit
+```
 
 ## License
 
