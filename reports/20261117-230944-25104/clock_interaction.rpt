@@ -1,0 +1,42 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1 (win64) Build 6511674 Tue Jun 16 11:02:23 MDT 2026
+| Date         : Tue Nov 17 23:18:40 2026
+| Host         : L1 running 64-bit major release  (build 9200)
+| Command      : report_clock_interaction -file C:/Users/jaxso/pcileech-rtl8125b-35t/reports/20261117-230944-25104/clock_interaction.rpt
+| Design       : pcie_top_wrapper
+| Device       : 7a35t-fgg484
+| Speed File   : -2  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+Clock Interaction Report
+
+Clock Interaction Table
+-----------------------
+
+                                          WNS                            TNS Failing  TNS Total    WNS Path         Clock-Pair           Inter-Clock                  
+From Clock           To Clock             Clock Edges  WNS(ns)  TNS(ns)    Endpoints    Endpoints  Requirement(ns)  Classification       Constraints                  
+-------------------  -------------------  -----------  -------  -------  -----------  -----------  ---------------  -------------------  ---------------------------  
+clk_125mhz_mux_x0y0  clk_125mhz_mux_x0y0  rise - rise     4.62     0.00            0          704             8.00  Clean                Timed                        
+clk_125mhz_mux_x0y0  clk_125mhz_x0y0      rise - rise     5.52     0.00            0            5             8.00  Clean                Partial False Path           
+clk_125mhz_mux_x0y0  clk_250mhz_mux_x0y0                                           0          704                   Ignored              Exclusive Groups             
+clk_125mhz_mux_x0y0  clk_250mhz_x0y0                                               0            1                   Ignored              False Path                   
+clk_125mhz_mux_x0y0  userclk1             rise - rise     4.93     0.00            0           30             8.00  Clean                Partial False Path           
+clk_125mhz_x0y0      clk_125mhz_mux_x0y0  rise - rise     5.80     0.00            0            3             8.00  Clean                Timed                        
+clk_125mhz_x0y0      clk_125mhz_x0y0      rise - rise     5.26     0.00            0          335             8.00  Clean                Timed                        
+clk_125mhz_x0y0      clk_250mhz_mux_x0y0  rise - rise     1.68     0.00            0            3             4.00  Clean                Timed                        
+clk_250mhz_mux_x0y0  clk_125mhz_mux_x0y0                                           0          704                   Ignored              Exclusive Groups             
+clk_250mhz_mux_x0y0  clk_125mhz_x0y0      rise - rise     1.40     0.00            0            5             4.00  Clean                Partial False Path           
+clk_250mhz_mux_x0y0  clk_250mhz_mux_x0y0  rise - rise     0.63     0.00            0          704             4.00  Clean                Timed                        
+clk_250mhz_mux_x0y0  clk_250mhz_x0y0                                               0            1                   Ignored              False Path                   
+clk_250mhz_mux_x0y0  userclk1             rise - rise     0.93     0.00            0           30             4.00  Clean                Partial False Path           
+ft601_clk            ft601_clk            rise - rise     1.70     0.00            0         2020            10.00  Clean                Partial False Path           
+ft601_clk            userclk1             rise - rise     0.66     0.00            0           83             2.00  No Common Clock      Partial False Path (unsafe)  
+pcie_refclk          pcie_refclk          rise - rise     8.69     0.00            0            7            10.00  Clean                Timed                        
+userclk1             clk_125mhz_mux_x0y0  rise - rise     5.12     0.00            0            2             8.00  Clean                Timed                        
+userclk1             clk_250mhz_mux_x0y0  rise - rise     1.12     0.00            0            2             4.00  Clean                Timed                        
+userclk1             ft601_clk            rise - rise    13.97     0.00            0           42            16.00  Ignored              Max Delay Datapath Only      
+userclk1             userclk1             rise - rise     5.24     0.00            0        45189            16.00  Clean                Timed                        
+
+

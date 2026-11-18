@@ -1,0 +1,31 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1 (win64) Build 6511674 Tue Jun 16 11:02:23 MDT 2026
+| Date         : Tue Nov 17 22:30:51 2026
+| Host         : L1 running 64-bit major release  (build 9200)
+| Command      : report_cdc -file C:/Users/jaxso/pcileech-rtl8125b-35t/reports/20261117-222447-7064/synth_cdc.rpt
+| Design       : pcie_top_wrapper
+| Device       : 7a35t-fgg484
+| Speed File   : -2  PRODUCTION 1.23 2018-06-13
+| Design State : Synthesized
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+CDC Report
+
+Severity  Source Clock         Destination Clock    CDC Type                 Exceptions  Endpoints  Safe  Unsafe  Unknown  No ASYNC_REG  
+--------  -------------------  -------------------  -----------------------  ----------  ---------  ----  ------  -------  ------------  
+Critical  clk_125mhz_mux_x0y0  clk_250mhz_x0y0      User Ignored             False Path          1     0       1        0             0  
+Critical  clk_250mhz_mux_x0y0  clk_250mhz_x0y0      User Ignored             False Path          1     0       1        0             0  
+Info      clk_125mhz_x0y0      clk_125mhz_mux_x0y0  Safely Timed             None                3     3       0        0             0  
+Info      input port clock     clk_125mhz_mux_x0y0  No Common Primary Clock  False Path          1     1       0        0             0  
+Info      userclk1             clk_125mhz_mux_x0y0  Safely Timed             None                1     1       0        0             0  
+Info      clk_125mhz_mux_x0y0  clk_125mhz_x0y0      Safely Timed             None                5     5       0        0             0  
+Info      clk_250mhz_mux_x0y0  clk_125mhz_x0y0      Safely Timed             None                5     5       0        0             0  
+Info      clk_125mhz_x0y0      clk_250mhz_mux_x0y0  Safely Timed             None                3     3       0        0             0  
+Info      input port clock     clk_250mhz_mux_x0y0  No Common Primary Clock  False Path          1     1       0        0             0  
+Info      userclk1             clk_250mhz_mux_x0y0  Safely Timed             None                1     1       0        0             0  
+Info      userclk1             ft601_clk            No Common Primary Clock  False Path          2     2       0        0             0  
+Info      clk_125mhz_mux_x0y0  userclk1             Safely Timed             None                5     5       0        0             0  
+Info      clk_250mhz_mux_x0y0  userclk1             Safely Timed             None                5     5       0        0             0  
+Info      ft601_clk            userclk1             No Common Primary Clock  False Path          2     2       0        0             0  
+

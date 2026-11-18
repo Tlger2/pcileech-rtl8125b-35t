@@ -1,37 +1,29 @@
 // PCI Type 0 Configuration Space (first 64 bytes / 16 DWs) for an endpoint
 // impersonating a Realtek RTL8125B 2.5 GbE NIC.
 //
-// Identity:
-//   Vendor ID            0x10EC
-//   Device ID            0x8125
-//   Revision ID          0x05  (RTL8125B silicon stepping)
-//   Class Code           0x020000 (Network / Ethernet)
-//   Subsystem Vendor ID  0x1043  (ASUS retail)
-//   Subsystem ID         0x87D3  (ASUS retail)
-//   Header Type          0x00
+// Identity comes from rtl8125b_identity_pkg (10EC:8125 rev 05, SVID/SSID 10EC:0123).
 //
-// BARs:
-//   BAR0 : 32-bit I/O port, 256-byte aperture (bit[0]=1 I/O type)
-//   BAR1 : disabled (independent BAR, not upper half of 64-bit pair)
-//   BAR2 : 32-bit non-prefetchable, 4 KiB
-//   BAR3..BAR5 : disabled
+// BAR map presented to the host matches XC7A35T pcie_7x silicon, not the
+// donor's I/O BAR0 (7-series IP cannot emit I/O BARs; a 256 B Memory BAR0
+// Code-10s rtcx21). Closest legal equivalent already used in this project:
+//   BAR0/BAR1 : unused (read as 0)
+//   BAR2/BAR3 : 64-bit non-prefetchable MMIO 64 KiB (MAC window)
+//   BAR4/BAR5 : 64-bit non-prefetchable MMIO 16 KiB (MSI-X table/PBA)
 //
-// Identity comes from rtl8125b_identity_pkg so the live IP and this header
-// cannot drift.
+// Capabilities chain head at byte 0x34 (CAP_PTR).
 
 module pci_type0_cfg_header
     import rtl8125b_identity_pkg::*;
 #(
-    parameter logic [15:0] VENDOR_ID        = 16'h10EC,
-    parameter logic [15:0] DEVICE_ID        = 16'h8125,
-    parameter logic [7:0]  REVISION_ID      = 8'h05,          // RTL8125B silicon stepping
-    parameter logic [23:0] CLASS_CODE       = 24'h020000,
-    parameter logic [15:0] SUBSYS_VENDOR_ID = 16'h1043,       // ASUS retail SVID
-    parameter logic [15:0] SUBSYS_ID        = 16'h87D3,       // ASUS retail SSID
-    parameter logic [31:0] BAR0_SIZE_MASK   = 32'hFFFF_FF00,  // 256-byte I/O port
-    parameter logic [31:0] BAR1_SIZE_MASK   = 32'hFFFF_FFFF,
-    parameter logic [31:0] BAR2_SIZE_MASK   = 32'hFFFF_F000,  // 4 KiB
-    parameter logic [7:0]  CAP_PTR          = 8'h40
+    parameter logic [15:0] VENDOR_ID        = rtl8125b_identity_pkg::VENDOR_ID,
+    parameter logic [15:0] DEVICE_ID        = rtl8125b_identity_pkg::DEVICE_ID,
+    parameter logic [7:0]  REVISION_ID      = rtl8125b_identity_pkg::REVISION_ID,
+    parameter logic [23:0] CLASS_CODE       = rtl8125b_identity_pkg::CLASS_CODE,
+    parameter logic [15:0] SUBSYS_VENDOR_ID = rtl8125b_identity_pkg::SUBSYS_VENDOR_ID,
+    parameter logic [15:0] SUBSYS_ID        = rtl8125b_identity_pkg::SUBSYS_ID,
+    parameter logic [31:0] BAR2_SIZE_MASK   = rtl8125b_identity_pkg::BAR2_MEM_MASK,
+    parameter logic [31:0] BAR4_SIZE_MASK   = rtl8125b_identity_pkg::BAR4_MEM_MASK,
+    parameter logic [7:0]  CAP_PTR          = rtl8125b_identity_pkg::CAP_PTR
 ) (
     input  logic        clk,
     input  logic        rst_n,
@@ -60,8 +52,9 @@ module pci_type0_cfg_header
     input  logic        sta_signaled_system_error_set,
     input  logic        sta_detected_parity_error_set,
 
-    output logic [63:0] bar0_base_64,
-    output logic [31:0] bar2_base_32,
+    output logic [63:0] bar0_base_64,   // always 0 — I/O BAR omitted
+    output logic [63:0] bar2_base_64,
+    output logic [63:0] bar4_base_64,
     output logic [7:0]  interrupt_line
 );
     function automatic logic [31:0] bewr(
@@ -86,10 +79,12 @@ module pci_type0_cfg_header
     logic sta_rcv_mst_abort_q, sta_sig_sys_err_q, sta_det_parity_err_q;
 
     logic [7:0]  cache_line_size_q;
-    logic [31:0] bar0_q, bar2_q, exprom_q;
+    logic [31:0] bar2_lo_q, bar2_hi_q, bar4_lo_q, bar4_hi_q;
     logic [7:0]  interrupt_line_q;
 
-    localparam logic [7:0]  INTERRUPT_PIN = 8'h01;
+    // Memory, 64-bit, non-prefetchable (PCI BAR bits [3:0] = 4'b0100)
+    localparam logic [31:0] BAR_TYPE_64_NPREF = 32'h0000_0004;
+    localparam logic [7:0]  INTERRUPT_PIN     = 8'h01;
 
     assign cmd_io_space_en     = cmd_io_en_q;
     assign cmd_mem_space_en    = cmd_mem_en_q;
@@ -98,8 +93,9 @@ module pci_type0_cfg_header
     assign cmd_serr_en         = cmd_serr_en_q;
     assign cmd_intx_disable    = cmd_intx_disable_q;
 
-    assign bar0_base_64   = {32'h0, bar0_q & BAR0_SIZE_MASK};  // 32-bit I/O port; upper word always 0
-    assign bar2_base_32   = bar2_q & BAR2_SIZE_MASK;
+    assign bar0_base_64   = 64'h0;
+    assign bar2_base_64   = {bar2_hi_q, bar2_lo_q & BAR2_SIZE_MASK};
+    assign bar4_base_64   = {bar4_hi_q, bar4_lo_q & BAR4_SIZE_MASK};
     assign interrupt_line = interrupt_line_q;
 
     logic [15:0] command_rd;
@@ -142,15 +138,16 @@ module pci_type0_cfg_header
             6'd1:  cfg_rdata = {status_rd, command_rd};
             6'd2:  cfg_rdata = {CLASS_CODE, REVISION_ID};
             6'd3:  cfg_rdata = {8'h00, 8'h00, 8'h00, cache_line_size_q};
-            6'd4:  cfg_rdata = (bar0_q & BAR0_SIZE_MASK) | 32'h0000_0001;  // bit[0]=1: I/O space
-            6'd5:  cfg_rdata = 32'h0;  // BAR1 disabled (not upper half of 64-bit pair)
-            6'd6:  cfg_rdata = (bar2_q & BAR2_SIZE_MASK) | 32'h0000_0000;  // 32-bit mem, npref
-            6'd7:  cfg_rdata = 32'h0;  // BAR3 disabled
-            6'd8:  cfg_rdata = 32'h0;  // BAR4 disabled
-            6'd9:  cfg_rdata = 32'h0;  // BAR5 disabled
-            6'd10: cfg_rdata = 32'h0;
+            // BAR0/BAR1 omitted: 7-series pcie_7x cannot emit the donor I/O 256 B BAR.
+            6'd4:  cfg_rdata = 32'h0;
+            6'd5:  cfg_rdata = 32'h0;
+            6'd6:  cfg_rdata = (bar2_lo_q & BAR2_SIZE_MASK) | BAR_TYPE_64_NPREF;
+            6'd7:  cfg_rdata = bar2_hi_q;
+            6'd8:  cfg_rdata = (bar4_lo_q & BAR4_SIZE_MASK) | BAR_TYPE_64_NPREF;
+            6'd9:  cfg_rdata = bar4_hi_q;
+            6'd10: cfg_rdata = 32'h0;  // CardBus CIS unused
             6'd11: cfg_rdata = {SUBSYS_ID, SUBSYS_VENDOR_ID};
-            6'd12: cfg_rdata = (exprom_q & rtl8125b_identity_pkg::EXPROM_MASK);
+            6'd12: cfg_rdata = 32'h0;  // Expansion ROM disabled
             6'd13: cfg_rdata = {24'h0, CAP_PTR};
             6'd14: cfg_rdata = 32'h0;
             6'd15: cfg_rdata = {8'h00, 8'h00, INTERRUPT_PIN, interrupt_line_q};
@@ -178,9 +175,10 @@ module pci_type0_cfg_header
             sta_sig_sys_err_q   <= 1'b0;
             sta_det_parity_err_q<= 1'b0;
             cache_line_size_q   <= 8'h00;
-            bar0_q              <= 32'h0;
-            bar2_q              <= 32'h0;
-            exprom_q            <= 32'h0;
+            bar2_lo_q           <= 32'h0;
+            bar2_hi_q           <= 32'h0;
+            bar4_lo_q           <= 32'h0;
+            bar4_hi_q           <= 32'h0;
             interrupt_line_q    <= 8'hFF;
         end else begin
             if (sta_master_data_perr_set)      sta_master_perr_q   <= 1'b1;
@@ -211,10 +209,10 @@ module pci_type0_cfg_header
                         if (cfg_be[3] && cfg_wdata[31]) sta_det_parity_err_q <= 1'b0;
                     end
                     6'd3: if (cfg_be[0]) cache_line_size_q <= cfg_wdata[7:0];
-                    6'd4: bar0_q   <= bewr(bar0_q,   cfg_wdata, cfg_be, BAR0_SIZE_MASK);
-                    6'd6: bar2_q   <= bewr(bar2_q,   cfg_wdata, cfg_be, BAR2_SIZE_MASK);
-                    6'd12: exprom_q <= bewr(exprom_q, cfg_wdata, cfg_be,
-                                           rtl8125b_identity_pkg::EXPROM_MASK);
+                    6'd6: bar2_lo_q <= bewr(bar2_lo_q, cfg_wdata, cfg_be, BAR2_SIZE_MASK);
+                    6'd7: bar2_hi_q <= bewr(bar2_hi_q, cfg_wdata, cfg_be, 32'hFFFF_FFFF);
+                    6'd8: bar4_lo_q <= bewr(bar4_lo_q, cfg_wdata, cfg_be, BAR4_SIZE_MASK);
+                    6'd9: bar4_hi_q <= bewr(bar4_hi_q, cfg_wdata, cfg_be, 32'hFFFF_FFFF);
                     6'd15: if (cfg_be[0]) interrupt_line_q <= cfg_wdata[7:0];
                     default: ;
                 endcase

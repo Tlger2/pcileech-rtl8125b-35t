@@ -1,0 +1,465 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1 (win64) Build 6511674 Tue Jun 16 11:02:23 MDT 2026
+| Date         : Tue Nov 17 22:35:32 2026
+| Host         : L1 running 64-bit major release  (build 9200)
+| Command      : report_bus_skew -warn_on_violation -file pcie_top_wrapper_bus_skew_routed.rpt -pb pcie_top_wrapper_bus_skew_routed.pb -rpx pcie_top_wrapper_bus_skew_routed.rpx
+| Design       : pcie_top_wrapper
+| Device       : 7a35t-fgg484
+| Speed File   : -2  PRODUCTION 1.23 2018-06-13
+| Design State : Routed
+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+Bus Skew Report
+
+Table of Contents
+-----------------
+1. Bus Skew Report Summary
+2. Bus Skew Report Per Constraint
+
+1. Bus Skew Report Summary
+--------------------------
+
+Id  Position  From                            To                              Corner  Requirement(ns)  Actual(ns)  Slack(ns)
+--  --------  ------------------------------  ------------------------------  ------  ---------------  ----------  ---------
+1   40        [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              Slow             10.000       0.659      9.341
+2   42        [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              Slow             10.000       0.433      9.567
+3   44        [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              Slow             10.000       0.624      9.376
+4   46        [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]}]]
+                                              [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]]
+                                                                              Slow             10.000       0.654      9.346
+
+
+2. Bus Skew Report Per Constraint
+---------------------------------
+
+Id: 1
+set_bus_skew -from [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 10.000
+Requirement: 10.000ns
+Endpoints: 4
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+userclk1              ft601_clk             u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+                                                                            u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/D
+                                                                                                            Slow         0.659      9.341
+
+
+Slack (MET) :             9.341ns  (requirement - actual skew)
+  Endpoint Source:        u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Endpoint Destination:   u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Reference Source:       u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Reference Destination:  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/D
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            10.000ns
+  Endpoint Relative Delay:    2.352ns
+  Reference Relative Delay:   1.077ns
+  Relative CRPR:              0.616ns
+  Actual Bus Skew:            0.659ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.209     1.209    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.081     1.290 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.391     2.681    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.077     2.757 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.425     4.182    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.081     4.263 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.339     5.602    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_clk
+    SLICE_X32Y71         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X32Y71         FDRE (Prop_fdre_C_Q)         0.348     5.951 r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]/Q
+                         net (fo=1, routed)           0.462     6.412    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/async_path[1]
+    SLICE_X33Y71         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.357     1.357 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.604     2.962    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.077     3.039 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.232     4.271    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_clk
+    SLICE_X33Y71         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/C
+                         clock pessimism              0.000     4.271    <hidden>
+    SLICE_X33Y71         FDRE (Setup_fdre_C_D)       -0.210     4.061    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]
+  -------------------------------------------------------------------
+                         data arrival                           6.412    <hidden>
+                         clock arrival                          4.061    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                         2.352    <hidden>
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.150     1.150    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.077     1.227 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.286     2.513    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.073     2.586 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.357     3.944    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.077     4.021 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.232     5.253    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_clk
+    SLICE_X32Y71         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X32Y71         FDRE (Prop_fdre_C_Q)         0.304     5.557 r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]/Q
+                         net (fo=1, routed)           0.193     5.750    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/async_path[0]
+    SLICE_X33Y71         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.423     1.423 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.693     3.116    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.081     3.197 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.339     4.537    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_clk
+    SLICE_X33Y71         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/C
+                         clock pessimism              0.000     4.537    <hidden>
+    SLICE_X33Y71         FDRE (Hold_fdre_C_D)         0.136     4.673    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]
+  -------------------------------------------------------------------
+                         data arrival                           5.750    <hidden>
+                         clock arrival                          4.673    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                         1.077    <hidden>
+
+
+
+Id: 2
+set_bus_skew -from [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 10.000
+Requirement: 10.000ns
+Endpoints: 4
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+userclk1              ft601_clk             u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]/D
+                                                                            u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/D
+                                                                                                            Slow         0.433      9.567
+
+
+Slack (MET) :             9.567ns  (requirement - actual skew)
+  Endpoint Source:        u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]/C
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Endpoint Destination:   u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]/D
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Reference Source:       u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]/C
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Reference Destination:  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/D
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            10.000ns
+  Endpoint Relative Delay:    2.135ns
+  Reference Relative Delay:   1.081ns
+  Relative CRPR:              0.621ns
+  Actual Bus Skew:            0.433ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.209     1.209    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.081     1.290 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.391     2.681    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.077     2.757 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.425     4.182    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.081     4.263 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.350     5.613    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_clk
+    SLICE_X35Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X35Y59         FDRE (Prop_fdre_C_Q)         0.348     5.961 r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]/Q
+                         net (fo=1, routed)           0.248     6.209    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/async_path[3]
+    SLICE_X33Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.357     1.357 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.604     2.962    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.077     3.039 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.243     4.282    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_clk
+    SLICE_X33Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]/C
+                         clock pessimism              0.000     4.282    <hidden>
+    SLICE_X33Y59         FDRE (Setup_fdre_C_D)       -0.207     4.075    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]
+  -------------------------------------------------------------------
+                         data arrival                           6.209    <hidden>
+                         clock arrival                          4.075    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                         2.135    <hidden>
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.150     1.150    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.077     1.227 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.286     2.513    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.073     2.586 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.357     3.944    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.077     4.021 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.240     5.261    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_clk
+    SLICE_X35Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X35Y59         FDRE (Prop_fdre_C_Q)         0.304     5.565 r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]/Q
+                         net (fo=1, routed)           0.204     5.768    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/async_path[2]
+    SLICE_X33Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.423     1.423 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.693     3.116    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.081     3.197 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.352     4.550    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_clk
+    SLICE_X33Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/C
+                         clock pessimism              0.000     4.550    <hidden>
+    SLICE_X33Y59         FDRE (Hold_fdre_C_D)         0.138     4.688    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]
+  -------------------------------------------------------------------
+                         data arrival                           5.768    <hidden>
+                         clock arrival                          4.688    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                         1.081    <hidden>
+
+
+
+Id: 3
+set_bus_skew -from [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 10.000
+Requirement: 10.000ns
+Endpoints: 4
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+ft601_clk             userclk1              u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+                                                                            u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/D
+                                                                                                            Slow         0.624      9.376
+
+
+Slack (MET) :             9.376ns  (requirement - actual skew)
+  Endpoint Source:        u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Endpoint Destination:   u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Reference Source:       u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]/C
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Reference Destination:  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/D
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            10.000ns
+  Endpoint Relative Delay:    0.229ns
+  Reference Relative Delay:  -0.973ns
+  Relative CRPR:              0.578ns
+  Actual Bus Skew:            0.624ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.423     1.423 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.693     3.116    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.081     3.197 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.349     4.547    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_clk
+    SLICE_X35Y60         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X35Y60         FDRE (Prop_fdre_C_Q)         0.348     4.895 r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[1]/Q
+                         net (fo=1, routed)           0.387     5.281    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/async_path[1]
+    SLICE_X33Y60         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.150     1.150    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.077     1.227 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.286     2.513    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.073     2.586 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.357     3.944    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.077     4.021 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.242     5.263    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_clk
+    SLICE_X33Y60         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/C
+                         clock pessimism              0.000     5.263    <hidden>
+    SLICE_X33Y60         FDRE (Setup_fdre_C_D)       -0.210     5.053    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][1]
+  -------------------------------------------------------------------
+                         data arrival                           5.281    <hidden>
+                         clock arrival                          5.053    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                         0.229    <hidden>
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.357     1.357 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.604     2.962    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.077     3.039 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.239     4.278    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_clk
+    SLICE_X35Y60         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X35Y60         FDRE (Prop_fdre_C_Q)         0.304     4.582 r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/src_gray_ff_reg[2]/Q
+                         net (fo=1, routed)           0.195     4.776    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/async_path[2]
+    SLICE_X35Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.209     1.209    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.081     1.290 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.391     2.681    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.077     2.757 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.425     4.182    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.081     4.263 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.350     5.613    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_clk
+    SLICE_X35Y59         FDRE                                         r  u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]/C
+                         clock pessimism              0.000     5.613    <hidden>
+    SLICE_X35Y59         FDRE (Hold_fdre_C_D)         0.136     5.749    u_endpoint/u_rsp_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.rd_pntr_cdc_inst/dest_graysync_ff_reg[0][2]
+  -------------------------------------------------------------------
+                         data arrival                           4.776    <hidden>
+                         clock arrival                          5.749    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                        -0.973    <hidden>
+
+
+
+Id: 4
+set_bus_skew -from [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[3]}]] -to [get_cells [list {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][2]} {u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][3]}]] 10.000
+Requirement: 10.000ns
+Endpoints: 4
+
+From Clock            To Clock              Endpoint Pin                    Reference Pin                   Corner  Actual(ns)  Slack(ns)
+--------------------  --------------------  ------------------------------  ------------------------------  ------  ----------  ---------
+ft601_clk             userclk1              u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+                                                                            u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/D
+                                                                                                            Slow         0.654      9.346
+
+
+Slack (MET) :             9.346ns  (requirement - actual skew)
+  Endpoint Source:        u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]/C
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Endpoint Destination:   u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Reference Source:       u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]/C
+                            (rising edge-triggered cell FDRE clocked by ft601_clk)
+  Reference Destination:  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/D
+                            (rising edge-triggered cell FDRE clocked by userclk1)
+  Path Type:              Bus Skew (Max at Slow Process Corner)
+  Requirement:            10.000ns
+  Endpoint Relative Delay:    0.298ns
+  Reference Relative Delay:  -0.970ns
+  Relative CRPR:              0.614ns
+  Actual Bus Skew:            0.654ns  (Endpoint Relative Delay - Reference Relative Delay - Relative CRPR)
+
+Endpoint path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.423     1.423 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.693     3.116    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.081     3.197 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.335     4.533    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_clk
+    SLICE_X32Y74         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X32Y74         FDRE (Prop_fdre_C_Q)         0.348     4.881 r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[1]/Q
+                         net (fo=1, routed)           0.457     5.337    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/async_path[1]
+    SLICE_X33Y74         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.150     1.150    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.077     1.227 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.286     2.513    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.073     2.586 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.357     3.944    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.077     4.021 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.229     5.250    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_clk
+    SLICE_X33Y74         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]/C
+                         clock pessimism              0.000     5.250    <hidden>
+    SLICE_X33Y74         FDRE (Setup_fdre_C_D)       -0.210     5.040    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][1]
+  -------------------------------------------------------------------
+                         data arrival                           5.337    <hidden>
+                         clock arrival                          5.040    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                         0.298    <hidden>
+
+Reference path:
+    Location             Delay type                Incr(ns)  Path(ns)    Netlist Resource(s)
+  -------------------------------------------------------------------    -------------------
+                         (clock ft601_clk rise edge)
+                                                      0.000     0.000 r  <hidden>
+    W19                                               0.000     0.000 r  ft601_clk
+                         net (fo=0)                   0.000     0.000    ft601_clk
+    W19                  IBUF (Prop_ibuf_I_O)         1.357     1.357 r  u_ft601_clk_ibuf/O
+                         net (fo=1, routed)           1.604     2.962    ft601_clk_ibuf
+    BUFGCTRL_X0Y3        BUFG (Prop_bufg_I_O)         0.077     3.039 r  u_ft601_clk_bufg/O
+                         net (fo=652, routed)         1.229     4.268    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_clk
+    SLICE_X32Y74         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]/C
+  -------------------------------------------------------------------    -------------------
+    SLICE_X32Y74         FDRE (Prop_fdre_C_Q)         0.304     4.572 r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/src_gray_ff_reg[0]/Q
+                         net (fo=1, routed)           0.193     4.765    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/async_path[0]
+    SLICE_X33Y74         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/D
+  -------------------------------------------------------------------    -------------------
+
+                         (clock userclk1 rise edge)
+                                                      0.000     0.000 r  <hidden>
+    GTPE2_CHANNEL_X0Y2   GTPE2_CHANNEL                0.000     0.000 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtp_channel.gtpe2_channel_i/TXOUTCLK
+                         net (fo=1, routed)           1.209     1.209    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i_0
+    BUFGCTRL_X0Y17       BUFG (Prop_bufg_I_O)         0.081     1.290 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/txoutclk_i.txoutclk_i/O
+                         net (fo=1, routed)           1.391     2.681    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/refclk
+    MMCME2_ADV_X0Y0      MMCME2_ADV (Prop_mmcme2_adv_CLKIN1_CLKOUT2)
+                                                      0.077     2.757 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/mmcm_i/CLKOUT2
+                         net (fo=1, routed)           1.425     4.182    u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1
+    BUFGCTRL_X0Y0        BUFG (Prop_bufg_I_O)         0.081     4.263 r  u_pcie_7x/inst/inst/gt_top_i/pipe_wrapper_i/pipe_clock_int.pipe_clock_i/userclk1_i1.usrclk1_i1/O
+                         net (fo=14882, routed)       1.335     5.598    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_clk
+    SLICE_X33Y74         FDRE                                         r  u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]/C
+                         clock pessimism              0.000     5.598    <hidden>
+    SLICE_X33Y74         FDRE (Hold_fdre_C_D)         0.136     5.734    u_endpoint/u_cmd_cdc/gnuram_async_fifo.xpm_fifo_base_inst/gen_cdc_pntr.wr_pntr_cdc_inst/dest_graysync_ff_reg[0][0]
+  -------------------------------------------------------------------
+                         data arrival                           4.765    <hidden>
+                         clock arrival                          5.734    <hidden>
+  -------------------------------------------------------------------
+                         relative delay                        -0.970    <hidden>
+
+
+

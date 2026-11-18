@@ -24,7 +24,10 @@ package rtl8125b_identity_pkg;
     localparam logic [63:0] CFG_DSN = {DSN_HI, DSN_LO};
 
     // BAR map (donor RTL8125B rev 05, SVID/SSID 10EC:0123)
-    //   BAR0 : I/O 256 B
+    //   BAR0 : I/O 256 B on real silicon. 7-series IP cannot emit I/O BARs;
+    //          a 256 B Memory BAR0 Code-10s rtcx21, so BAR0 is omitted and
+    //          the MAC window is BAR2 (same layout Windows assigns the
+    //          onboard 8125B on this machine).
     //   BAR2 : 64-bit non-prefetchable MMIO 64 KB (MAC)
     //   BAR4 : 64-bit non-prefetchable MMIO 16 KB (MSI-X table/PBA)
     localparam logic [31:0] BAR0_IO_MASK   = 32'hFFFF_FF00;  // 256 B I/O

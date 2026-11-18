@@ -1,15 +1,13 @@
 // MSI-X Capability (3 DWs, cap ID 0x11).
-// Donor: Count=32, BAR=4, table off 0, PBA off 0x800, Next=VPD@0xD0.
+// Donor: 32 vectors in BAR4, table @ 0, PBA @ 0x800, next → VPD @ 0xD0.
 
-module pci_cap_msix
-    import rtl8125b_identity_pkg::*;
-#(
-    parameter logic [7:0]  NEXT_PTR          = VPD_BASE,
-    parameter int          NUM_VECTORS       = MSIX_VECTORS,
-    parameter logic [2:0]  TABLE_BIR         = MSIX_TABLE_BIR,
-    parameter logic [28:0] TABLE_QW_OFFSET   = MSIX_TABLE_QW,
-    parameter logic [2:0]  PBA_BIR           = MSIX_PBA_BIR,
-    parameter logic [28:0] PBA_QW_OFFSET     = MSIX_PBA_QW
+module pci_cap_msix #(
+    parameter logic [7:0]  NEXT_PTR          = 8'h70,
+    parameter int          NUM_VECTORS       = 8,
+    parameter logic [2:0]  TABLE_BIR         = 3'd0,
+    parameter logic [28:0] TABLE_QW_OFFSET   = 29'h0000_0000,
+    parameter logic [2:0]  PBA_BIR           = 3'd0,
+    parameter logic [28:0] PBA_QW_OFFSET     = 29'h0000_0200
 ) (
     input  logic        clk,
     input  logic        rst_n,

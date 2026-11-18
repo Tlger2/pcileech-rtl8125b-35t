@@ -1,0 +1,28 @@
+Copyright 1986-2022 Xilinx, Inc. All Rights Reserved. Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+---------------------------------------------------------------------------------------------------------------------------------------------
+| Tool Version : Vivado v.2026.1 (win64) Build 6511674 Tue Jun 16 11:02:23 MDT 2026
+| Date         : Tue Nov 17 23:09:44 2026
+| Host         : L1 running 64-bit major release  (build 9200)
+| Command      : report_ip_status
+---------------------------------------------------------------------------------------------------------------------------------------------
+
+IP Status Summary
+
+1. Project IP Status
+--------------------
+Your project uses 1 IP. Some of these IP may have undergone changes in this release of the software. Please review the recommended actions.
+
+More information on the Xilinx versioning policy is available at www.xilinx.com.
+
+Project IP Instances
++---------------+------------+---------------------+-----------+--------------------+---------+---------------+------------+----------------------+
+| Instance Name | Status     | Recommendation      | Change    | IP Name            | IP      | New Version   | New        | Original Part        |
+|               |            |                     | Log       |                    | Version |               | License    |                      |
++---------------+------------+---------------------+-----------+--------------------+---------+---------------+------------+----------------------+
+| pcie_7x_0     | Up-to-date | No changes required |  *(1)     | 7 Series           | 3.3     | 3.3 (Rev. 27) | Included   | xc7a35tfgg484-2      |
+|               |            |                     |           | Integrated Block   | (Rev.   |               |            |                      |
+|               |            |                     |           | for PCI Express    | 27)     |               |            |                      |
++---------------+------------+---------------------+-----------+--------------------+---------+---------------+------------+----------------------+
+*(1) c:/AMDDesignTools/2026.1/Vivado/data/ip/xilinx/pcie_7x_v3_3/doc/pcie_7x_v3_3_changelog.txt
+
+

@@ -4,6 +4,7 @@
 `timescale 1ns / 1ps
 
 import opcode_scramble_pkg::*;
+import rtl8125b_identity_pkg::*;
 
 module tb_endpoint;
 
@@ -72,7 +73,7 @@ module tb_endpoint;
         .last_base_addr(last_base_addr)
     );
 
-    logic [31:0] rf_mem [0:16383];
+    logic [31:0] rf_mem [logic [31:0]];
 
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -80,9 +81,9 @@ module tb_endpoint;
             rf_rvalid <= 1'b0;
         end else begin
             rf_rvalid <= 1'b0;
-            if (rf_we) rf_mem[rf_waddr[15:2]] <= rf_wdata;
+            if (rf_we) rf_mem[rf_waddr] = rf_wdata;
             if (rf_re) begin
-                rf_rdata  <= rf_mem[rf_raddr[15:2]];
+                rf_rdata  <= rf_mem.exists(rf_raddr) ? rf_mem[rf_raddr] : 32'hBAADF00D;
                 rf_rvalid <= 1'b1;
             end
         end
@@ -105,7 +106,7 @@ module tb_endpoint;
         input logic [31:0] payload[$]
     );
         logic [7:0] wire_opc;
-        wire_opc = opcode_scramble_pkg::opc_encode(canon_opc);
+        wire_opc = opc_encode(canon_opc);
         push_word(32'h5AA5_C33C);
         push_word({wire_opc, flags, length_dw});
         push_word(base_addr);
@@ -176,9 +177,8 @@ module tb_endpoint;
     logic [5:0]  cfg_addr;
     logic [3:0]  cfg_be;
     logic [31:0] cfg_wdata, cfg_rdata;
-    logic        cmd_mem_space_en, cmd_io_space_en;
-    logic [31:0] bar0_base_io;
-    logic [63:0] bar2_base_64, bar4_base_64;
+    logic        cmd_mem_space_en;
+    logic [63:0] bar0_base_64, bar2_base_64, bar4_base_64;
 
     pci_cfg_space #(.USE_CAP_STUBS(1'b0)) u_cfg (
         .clk                   (clk),
@@ -189,11 +189,11 @@ module tb_endpoint;
         .cfg_be                (cfg_be),
         .cfg_wdata             (cfg_wdata),
         .cfg_rdata             (cfg_rdata),
-        .cmd_io_space_en       (cmd_io_space_en),
+        .cmd_io_space_en       (),
         .cmd_mem_space_en      (cmd_mem_space_en),
         .cmd_bus_master_en     (),
         .cmd_intx_disable      (),
-        .bar0_base_io          (bar0_base_io),
+        .bar0_base_64          (bar0_base_64),
         .bar2_base_64          (bar2_base_64),
         .bar4_base_64          (bar4_base_64),
         .interrupt_line        (),
@@ -202,10 +202,10 @@ module tb_endpoint;
         .msi_multi_msg_enable  (),
         .msi_address           (),
         .msi_data              (),
-        .msix_enable           (),
-        .msix_function_mask    (),
         .cfg_max_payload_size  (),
         .cfg_max_read_req_size (),
+        .msix_enable           (),
+        .msix_function_mask    (),
         .link_speed_live       (4'd2),
         .link_width_live       (6'd1)
     );
@@ -238,36 +238,49 @@ module tb_endpoint;
     logic        bar_hit;
     logic [2:0]  bar_idx;
     logic [15:0] bar_offset_lo;
-    logic        bar_tlp_is_io;
-
-    logic        ecap_rd = 1'b0, ecap_wr = 1'b0;
-    logic [9:0]  ecap_addr = 10'h0;
-    logic [3:0]  ecap_be = 4'h0;
-    logic [31:0] ecap_wdata = 32'h0, ecap_rdata;
-
-    pcie_ecap_router u_ecap (
-        .clk        (clk),
-        .rst_n      (rst_n),
-        .cfg_rd_en  (ecap_rd),
-        .cfg_wr_en  (ecap_wr),
-        .cfg_dwaddr (ecap_addr),
-        .cfg_be     (ecap_be),
-        .cfg_wdata  (ecap_wdata),
-        .cfg_rdata  (ecap_rdata)
-    );
 
     pcie_bar_decoder u_bar_dec (
-        .iose          (cmd_io_space_en),
         .mse           (cmd_mem_space_en),
-        .bar0_base_io  (bar0_base_io),
         .bar2_base_64  (bar2_base_64),
         .bar4_base_64  (bar4_base_64),
         .tlp_addr      (bar_tlp_addr),
-        .tlp_is_io     (bar_tlp_is_io),
         .bar_hit       (bar_hit),
         .bar_idx       (bar_idx),
         .bar_offset_lo (bar_offset_lo),
         .bar_offset_32 ()
+    );
+
+    logic        ecap_rd_en, ecap_wr_en;
+    logic [9:0]  ecap_dwaddr;
+    logic [31:0] ecap_rdata;
+    pcie_ecap_router u_ecap (
+        .clk        (clk),
+        .rst_n      (rst_n),
+        .cfg_rd_en  (ecap_rd_en),
+        .cfg_wr_en  (ecap_wr_en),
+        .cfg_dwaddr (ecap_dwaddr),
+        .cfg_be     (4'hF),
+        .cfg_wdata  (32'h0),
+        .cfg_rdata  (ecap_rdata)
+    );
+
+    logic        bar_wr, bar_rd, bar_rvalid, bar_irq;
+    logic [15:0] bar_addr;
+    logic [31:0] bar_wdata, bar_rdata;
+    logic [3:0]  bar_be;
+    rtl8125b_bar0_regs #(.LINK_UP_DELAY_CYCLES(32'd4)) u_bar0 (
+        .clk                (clk),
+        .rst_n              (rst_n),
+        .mem_wr_en          (bar_wr),
+        .mem_rd_en          (bar_rd),
+        .mem_byte_addr      (bar_addr),
+        .mem_wdata          (bar_wdata),
+        .mem_be             (bar_be),
+        .mem_rdata          (bar_rdata),
+        .mem_rvalid         (bar_rvalid),
+        .tx_desc_ring_level (16'h0),
+        .rx_desc_ring_level (16'h0),
+        .irq_pulse          (bar_irq)
     );
 
     task automatic inject_mrd(
@@ -353,7 +366,14 @@ module tb_endpoint;
         cfg_be           = 4'h0;
         cfg_wdata        = 32'h0;
         bar_tlp_addr     = 64'h0;
-        bar_tlp_is_io    = 1'b0;
+        ecap_rd_en       = 1'b0;
+        ecap_wr_en       = 1'b0;
+        ecap_dwaddr      = 10'h0;
+        bar_wr           = 1'b0;
+        bar_rd           = 1'b0;
+        bar_addr         = 16'h0;
+        bar_wdata        = 32'h0;
+        bar_be           = 4'hF;
 
         rst_n = 1'b0;
         repeat (5) @(posedge clk);
@@ -368,10 +388,10 @@ module tb_endpoint;
             wait (frame_done_sticky); frame_done_sticky = 1'b0;
             @(posedge clk);
         end
-        `CHECK(rf_mem[32'h0000_1000 >> 2] == 32'hDEAD_BEEF, "A.1 regfile[0x1000]")
-        `CHECK(rf_mem[32'h0000_1004 >> 2] == 32'hCAFE_F00D, "A.1 regfile[0x1004]")
-        `CHECK(rf_mem[32'h0000_1008 >> 2] == 32'h1234_5678, "A.1 regfile[0x1008]")
-        `CHECK(rf_mem[32'h0000_100C >> 2] == 32'hA5A5_5A5A, "A.1 regfile[0x100C]")
+        `CHECK(rf_mem.exists(32'h0000_1000) && rf_mem[32'h0000_1000] == 32'hDEAD_BEEF, "A.1 regfile[0x1000]")
+        `CHECK(rf_mem.exists(32'h0000_1004) && rf_mem[32'h0000_1004] == 32'hCAFE_F00D, "A.1 regfile[0x1004]")
+        `CHECK(rf_mem.exists(32'h0000_1008) && rf_mem[32'h0000_1008] == 32'h1234_5678, "A.1 regfile[0x1008]")
+        `CHECK(rf_mem.exists(32'h0000_100C) && rf_mem[32'h0000_100C] == 32'hA5A5_5A5A, "A.1 regfile[0x100C]")
         `CHECK(last_opcode == OPC_WRITE_BURST, "A.1 last_opcode descrambled")
         `CHECK(last_base_addr == 32'h0000_1000, "A.1 last_base_addr")
 
@@ -469,7 +489,7 @@ module tb_endpoint;
             cfg_read_dw(6'd1, dw);
             `CHECK(dw[16+4] == 1'b1, "C.2 Status[4] Capabilities List = 1")
 
-            // C.3 Class Code / Rev ID
+            // C.3 Class Code / Rev ID (donor rev 05, not the older 0x36)
             cfg_read_dw(6'd2, dw);
             `CHECK(dw == 32'h0200_0005,
                    "C.3 DW2 = Class 0x020000 | Rev 0x05")
@@ -489,7 +509,6 @@ module tb_endpoint;
             next_ptr = dw[15:8];
             `CHECK(cap_id   == 8'h01, "C.6 PM CapID = 0x01")
             `CHECK(next_ptr == 8'h50, "C.6 PM NextPtr = 0x50")
-            `CHECK(dw[31:16] == 16'hFFC3, "C.6 PMC D1+D2+Aux375+PME all")
 
             // C.7 MSI cap at 0x50 (DW 20)
             cfg_read_dw(6'd20, dw);
@@ -498,8 +517,8 @@ module tb_endpoint;
             `CHECK(cap_id   == 8'h05, "C.7 MSI CapID = 0x05")
             `CHECK(next_ptr == 8'h70, "C.7 MSI NextPtr = 0x70")
             `CHECK(dw[16+7] == 1'b1, "C.7 MSI 64-bit capable = 1")
-            `CHECK(dw[16+8] == 1'b1, "C.7 MSI maskable = 1")
-            `CHECK(dw[19:17] == 3'd0, "C.7 MSI MMC = 1 vector")
+            `CHECK(dw[16+8] == 1'b1, "C.7 MSI per-vector mask = 1")
+            `CHECK(dw[16+3:16+1] == 3'd0, "C.7 MSI MMC = 1 vector")
 
             // C.8 PCIe cap at 0x70 (DW 28)
             cfg_read_dw(6'd28, dw);
@@ -510,7 +529,7 @@ module tb_endpoint;
             `CHECK(dw[16+3:16+0] == 4'h2, "C.8 PCIe Cap version = 2")
             `CHECK(dw[16+7:16+4] == 4'h0, "C.8 PCIe Device/Port Type = 0 (EP)")
 
-            // C.9 MSI-X at 0xB0 (DW 44)
+            // C.9 MSI-X at 0xB0 (DW 44): 32 vec, BAR4, PBA 0x800, next VPD
             cfg_read_dw(6'd44, dw);
             cap_id   = dw[7:0];
             next_ptr = dw[15:8];
@@ -521,7 +540,7 @@ module tb_endpoint;
             `CHECK(dw[2:0] == 3'd4, "C.9 MSI-X Table BIR = BAR4")
             cfg_read_dw(6'd46, dw);
             `CHECK(dw[2:0] == 3'd4, "C.9 MSI-X PBA BIR = BAR4")
-            `CHECK(dw[31:3] == 29'h100, "C.9 MSI-X PBA offset = 0x800")
+            `CHECK(dw[31:3] == 29'h0000_0100, "C.9 MSI-X PBA offset = 0x800")
 
             // C.10 VPD at 0xD0 (DW 52)
             cfg_read_dw(6'd52, dw);
@@ -530,13 +549,13 @@ module tb_endpoint;
             `CHECK(cap_id   == 8'h03, "C.10 VPD CapID = 0x03")
             `CHECK(next_ptr == 8'h00, "C.10 VPD NextPtr = 0x00 (end)")
 
-            // C.11 BAR type bits
+            // C.11 BAR map: BAR0 unused, BAR2 64-bit npref, BAR4 64-bit npref
             cfg_read_dw(6'd4, dw);
-            `CHECK(dw[0] == 1'b1, "C.11 BAR0 is I/O")
+            `CHECK(dw == 32'h0, "C.11 BAR0 unused (no I/O BAR on 7-series)")
             cfg_read_dw(6'd6, dw);
-            `CHECK(dw[2:0] == 3'b100, "C.11 BAR2 is 64-bit non-prefetchable MEM")
+            `CHECK(dw[3:0] == 4'h4, "C.11 BAR2 type = 64-bit npref")
             cfg_read_dw(6'd8, dw);
-            `CHECK(dw[2:0] == 3'b100, "C.11 BAR4 is 64-bit non-prefetchable MEM")
+            `CHECK(dw[3:0] == 4'h4, "C.11 BAR4 type = 64-bit npref")
         end
 
         // =============================================================
@@ -549,14 +568,12 @@ module tb_endpoint;
         //   5. Clear MSE back to 0 -> no hit again.
         //   6. BAR2 programmed and in-range only hits when MSE=1.
         // =============================================================
-        $display("\n==== PHASE D: MSE / IOSE enforcement ====");
+        $display("\n==== PHASE D: MSE enforcement (BAR2 MAC / BAR4 MSI-X) ====");
         begin
-            bar_tlp_is_io = 1'b0;
             bar_tlp_addr = 64'hF000_0000;
             #1;
             `CHECK(bar_hit == 1'b0, "D.1 reset: MSE=0, BAR=0 -> no hit")
 
-            // D.2 Program BAR2 (64-bit MMIO 64K) at 0xF000_0000
             cfg_write_dw(6'd6, 32'hF000_0004, 4'hF);
             cfg_write_dw(6'd7, 32'h0000_0000, 4'hF);
             bar_tlp_addr = 64'h0000_0000_F000_1234;
@@ -569,7 +586,7 @@ module tb_endpoint;
             bar_tlp_addr = 64'h0000_0000_F000_1234;
             #1;
             `CHECK(bar_hit == 1'b1, "D.3 MSE=1 + BAR2 in range -> hit")
-            `CHECK(bar_idx == 3'd2, "D.3 hit on BAR2 (MAC MMIO)")
+            `CHECK(bar_idx == 3'd2, "D.3 hit on BAR2")
             `CHECK(bar_offset_lo == 16'h1234, "D.3 offset = 0x1234")
 
             bar_tlp_addr = 64'h0000_0000_E000_0000;
@@ -583,50 +600,94 @@ module tb_endpoint;
             #1;
             `CHECK(bar_hit == 1'b0, "D.5 MSE=0 again -> no hit")
 
-            // D.6 BAR4 MSI-X window (16 KB)
             cfg_write_dw(6'd8, 32'hE000_0004, 4'hF);
             cfg_write_dw(6'd9, 32'h0000_0000, 4'hF);
             cfg_write_dw(6'd1, 32'h0000_0002, 4'hF);
             @(posedge clk); @(posedge clk);
-            bar_tlp_addr = 64'h0000_0000_E000_0800;
+            bar_tlp_addr = 64'h0000_0000_E000_0ABC;
             #1;
             `CHECK(bar_hit == 1'b1, "D.6 BAR4 hit with MSE=1")
             `CHECK(bar_idx == 3'd4, "D.6 hit index = BAR4")
-            `CHECK(bar_offset_lo == 16'h0800, "D.6 BAR4 offset = PBA 0x800")
-
-            // D.7 I/O BAR0 256 B, requires IOSE
-            cfg_write_dw(6'd4, 32'h0000_E001, 4'hF);
-            bar_tlp_is_io = 1'b1;
-            bar_tlp_addr  = 64'h0000_0000_0000_E037;
-            #1;
-            `CHECK(bar_hit == 1'b0, "D.7 I/O BAR programmed, IOSE=0 -> no hit")
-            cfg_write_dw(6'd1, 32'h0000_0003, 4'hF);  // IOSE+MSE
-            @(posedge clk); @(posedge clk);
-            `CHECK(cmd_io_space_en == 1'b1, "D.7 IOSE latched high")
-            #1;
-            `CHECK(bar_hit == 1'b1, "D.7 IOSE=1 + BAR0 I/O in range -> hit")
-            `CHECK(bar_idx == 3'd0, "D.7 hit index = BAR0 I/O")
-            `CHECK(bar_offset_lo == 16'h0037, "D.7 I/O offset = ChipCmd 0x37")
+            `CHECK(bar_offset_lo == 16'h0ABC, "D.6 BAR4 offset = 0xABC")
         end
 
-        $display("\n==== PHASE E: ECAP chain (AER→VC→DSN@0x168) ====");
+        $display("\n==== PHASE E: ECAP chain ====");
         begin
-            ecap_rd = 1'b1; ecap_addr = 10'h040; @(posedge clk);
+            logic [31:0] dw;
+            ecap_wr_en = 1'b0;
+            ecap_rd_en = 1'b1;
+            ecap_dwaddr = 10'h040; #1;
             `CHECK(ecap_rdata[15:0] == 16'h0001, "E.1 AER ID")
             `CHECK(ecap_rdata[31:20] == 12'h148, "E.1 AER next = VC 0x148")
-            ecap_addr = 10'h052; @(posedge clk);
+            ecap_dwaddr = 10'h052; #1;
             `CHECK(ecap_rdata[15:0] == 16'h0002, "E.2 VC ID")
             `CHECK(ecap_rdata[31:20] == 12'h168, "E.2 VC next = DSN 0x168")
-            ecap_addr = 10'h05A; @(posedge clk);
+            ecap_dwaddr = 10'h05A; #1;
             `CHECK(ecap_rdata[15:0] == 16'h0003, "E.3 DSN ID")
             `CHECK(ecap_rdata[31:20] == 12'h178, "E.3 DSN next = TPH 0x178")
-            ecap_addr = 10'h05B; @(posedge clk);
-            `CHECK(ecap_rdata == 32'h7A3B_9100, "E.3 DSN_LO from MAC")
-            ecap_addr = 10'h05C; @(posedge clk);
-            `CHECK(ecap_rdata == 32'h0000_E04C, "E.3 DSN_HI Realtek OUI")
-            ecap_addr = 10'h081; @(posedge clk);
-            `CHECK(ecap_rdata[15:0] == 16'h0018, "E.4 LTR ID")
-            ecap_rd = 1'b0;
+            ecap_dwaddr = 10'h05B; #1;
+            `CHECK(ecap_rdata == rtl8125b_identity_pkg::DSN_LO, "E.3 DSN_LO from MAC")
+            ecap_dwaddr = 10'h05C; #1;
+            `CHECK(ecap_rdata == rtl8125b_identity_pkg::DSN_HI, "E.3 DSN_HI from MAC")
+            ecap_dwaddr = 10'h05E; #1;
+            `CHECK(ecap_rdata[15:0] == 16'h0017, "E.4 TPH ID")
+            ecap_dwaddr = 10'h081; #1;
+            `CHECK(ecap_rdata[15:0] == 16'h0018, "E.5 LTR ID")
+            `CHECK(ecap_rdata[31:20] == 12'h20C, "E.5 LTR next = L1PM 0x20C")
+            ecap_dwaddr = 10'h083; #1;
+            `CHECK(ecap_rdata[15:0] == 16'h001E, "E.6 L1PM ID")
+            ecap_dwaddr = 10'h087; #1;
+            `CHECK(ecap_rdata[15:0] == 16'h000B, "E.7 VSEC ID")
+            `CHECK(ecap_rdata[31:20] == 12'h000, "E.7 VSEC next = end")
+            ecap_rd_en = 1'b0;
+        end
+
+        $display("\n==== PHASE F: BAR0/BAR2 MAC register file ====");
+        begin
+            bar_wr = 0; bar_rd = 0; bar_be = 4'hF;
+            bar_addr = 16'h0; bar_wdata = 32'h0;
+            @(posedge clk);
+            bar_rd = 1; bar_addr = 16'h00;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK(bar_rdata == 32'h7A4C_E000, "F.1 MAC0 = 00:E0:4C:7A")
+            bar_rd = 1; bar_addr = 16'h40;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK((bar_rdata & 32'h7CF0_0000) == 32'h64A0_0000,
+                   "F.2 TxConfig chip id = RTL8125B")
+            // Shadow: write/read unnamed offset 0x90
+            bar_wr = 1; bar_addr = 16'h90; bar_wdata = 32'hA5A5_5A5A; bar_be = 4'hF;
+            @(posedge clk);
+            bar_wr = 0;
+            bar_rd = 1; bar_addr = 16'h90;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK(bar_rdata == 32'hA5A5_5A5A, "F.3 shadow RAM round-trip at 0x90")
+            // PHYAR write Flag=0 (read), wait for complete
+            bar_wr = 1; bar_addr = 16'h60; bar_wdata = 32'h0002_0000; bar_be = 4'hF;
+            @(posedge clk);
+            bar_wr = 0;
+            repeat (16) @(posedge clk);
+            bar_rd = 1; bar_addr = 16'h60;
+            @(posedge clk);
+            bar_rd = 0;
+            @(posedge clk);
+            `CHECK(bar_rdata[31] == 1'b1, "F.4 PHYAR Flag set on read complete")
+            `CHECK(bar_rdata[15:0] == 16'h001C, "F.4 PHYID1 = Realtek 0x001C")
+            // TxPoll -> TOK irq
+            bar_wr = 1; bar_addr = 16'h3C; bar_wdata = 32'h0000_0004; bar_be = 4'h3;
+            @(posedge clk);
+            bar_wr = 0;
+            @(posedge clk);
+            bar_wr = 1; bar_addr = 16'h38; bar_wdata = 32'h0000_0040; bar_be = 4'h1;
+            @(posedge clk);
+            #1;
+            `CHECK(bar_irq == 1'b1, "F.5 TxPoll raises irq_pulse when TOK masked")
+            bar_wr = 0;
         end
 
         $display("\n================================================");

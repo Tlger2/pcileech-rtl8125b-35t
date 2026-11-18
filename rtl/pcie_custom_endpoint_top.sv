@@ -73,6 +73,15 @@ module pcie_custom_endpoint_top (
     input  logic        cfg_interrupt_msixenable,
     input  logic        cfg_interrupt_msixfm,
 
+    // {fc_nph, tx_buf_av, link_state, device status}. DMA reg 0x38.
+    input  logic [31:0] debug_link_diag,
+    // AER Correctable Error Status (byte 0x110). DMA reg 0x3C.
+    input  logic [31:0] debug_aer,
+    // Core discarded a TX TLP. Counted in DMA reg 0x34.
+    input  logic        tx_err_drop,
+    // Asserted while a DMA TLP is in flight (core cfg_trn_pending).
+    output logic        cfg_trn_pending,
+
     // ---- FT601 USB3 (ft601_clk domain) ----
     input  logic        ft601_clk,
     input  logic        ft601_rst_n,
@@ -102,10 +111,8 @@ assign fifo_arst = ~ft601_rst_n;
 // =============================================================================
 // Static tie-offs
 // =============================================================================
-assign m_axis_rx_tready    = 1'b1;   // 7-series RX cannot be back-pressured
-assign cfg_interrupt_assert = 1'b0;
-assign cfg_interrupt_di     = 8'h01;
-assign s_axis_tx_tuser      = 4'h0;
+assign m_axis_rx_tready = 1'b1;   // 7-series RX cannot be back-pressured
+assign s_axis_tx_tuser  = 4'h0;
 
 // =============================================================================
 // SECTION 1 — FT601 SFIFO (ft601_clk domain)
@@ -485,10 +492,12 @@ logic  [7:0] dma_rx_keep;
 logic        dma_rx_last;
 logic        dma_cpl_seen;
 logic [31:0] debug_rx_header;
-// BME gating: PCIe Command register bit[2] = Bus Master Enable.
-// Host OS writes this after assigning the BAR; hold DMA TLPs until set.
-logic bme_ok;
-assign bme_ok = cfg_command[2];
+
+// BME gate removed: dma_hold_req tied low so DMA fires regardless of
+// cfg_command[2]. The 35T target's Realtek driver does not set BME during
+// NdisInitialize, causing the FPGA to stall indefinitely in ST_WAIT_CPL.
+// The RC still enforces BME at the fabric level for real transactions;
+// this change only removes the redundant software-side gate.
 
 dma_engine u_dma_engine (
     .user_clk         (user_clk),
@@ -503,9 +512,11 @@ dma_engine u_dma_engine (
     .rf_rvalid        (rf_rvalid),
     // PCIe requester ID
     .cfg_completer_id (cfg_completer_id),
-    .cfg_command (cfg_command),
-    .debug_link_up (user_lnk_up),
-    .debug_rx_header (debug_rx_header),
+    .cfg_command      (cfg_command),
+    .debug_link_up    (user_lnk_up),
+    .debug_rx_header  (debug_rx_header),
+    .debug_link_diag  (debug_link_diag),
+    .debug_aer        (debug_aer),
     .cfg_max_payload_size(cfg_max_payload_size),
     // AXI-Stream TX → PCIe core
     .tx_req_valid     (dma_tx_valid),
@@ -519,9 +530,12 @@ dma_engine u_dma_engine (
     .rx_cpl_data      (dma_rx_data),
     .rx_cpl_keep      (dma_rx_keep),
     .rx_cpl_last      (dma_rx_last),
-    // Jitter gate
+    .rx_any_valid     (m_axis_rx_tvalid),
+    // Jitter gate — tied low, BME gate removed
     .dma_cpl_seen     (dma_cpl_seen),
-    .dma_hold_req     (~bme_ok)
+    .dma_hold_req     (1'b0),
+    .tx_err_drop      (tx_err_drop),
+    .np_pending       (cfg_trn_pending)
 );
 
 // =============================================================================
@@ -560,6 +574,8 @@ logic [15:0] rx_reqid_q;
 logic  [7:0] rx_tag_q;
 logic  [3:0] rx_firstbe_q;
 logic  [2:0] rx_tlp_kind;
+logic        rx_fourdw_q;
+logic [6:0]  rx_bar_hit_q; // m_axis_rx_tuser[8:2]
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
@@ -567,25 +583,29 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         rx_tag_q     <= '0;
         rx_firstbe_q <= '0;
         rx_tlp_kind  <= RX_OTHER;
+        rx_fourdw_q  <= 1'b0;
+        rx_bar_hit_q <= '0;
     end else if (m_axis_rx_tvalid && rx_beat_cnt == 2'd0) begin
         // Beat0: tdata[31:0]=DW0, tdata[63:32]=DW1
         // DW1: [31:16]=ReqID, [23:16]=Tag, [3:0]=FirstBE
         rx_reqid_q   <= m_axis_rx_tdata[63:48]; // DW1[31:16]
         rx_tag_q     <= m_axis_rx_tdata[47:40]; // DW1[23:16]
         rx_firstbe_q <= m_axis_rx_tdata[35:32]; // DW1[3:0]
+        rx_fourdw_q  <= m_axis_rx_tdata[29];    // Fmt[0] = 4DW header
+        rx_bar_hit_q <= m_axis_rx_tuser[8:2];
         case (m_axis_rx_tdata[31:24])            // DW0 fmt|type byte
-            8'h00:   rx_tlp_kind <= RX_MRD;
-            8'h40:   rx_tlp_kind <= RX_MWR;
-            8'h4A:   rx_tlp_kind <= RX_CPLD;
-            default: rx_tlp_kind <= RX_OTHER;
+            8'h00, 8'h20: rx_tlp_kind <= RX_MRD;   // 3DW/4DW MemRd
+            8'h40, 8'h60: rx_tlp_kind <= RX_MWR;   // 3DW/4DW MemWr
+            8'h0A, 8'h4A: rx_tlp_kind <= RX_CPLD;  // Cpl / CplD
+            default:      rx_tlp_kind <= RX_OTHER;
         endcase
     end
 end
 
-// --- CplD routing to DMA engine ---
-// beat0: combinatorial detection; beat1+: use registered rx_tlp_kind
+// --- Completion routing to DMA engine (Cpl 8'h0A and CplD 8'h4A) ---
+wire rx_is_cpl = (m_axis_rx_tdata[28:24] == 5'b01010);
 assign dma_rx_valid = m_axis_rx_tvalid & (
-    (rx_beat_cnt == 2'd0 && m_axis_rx_tdata[31:24] == 8'h4A) |
+    (rx_beat_cnt == 2'd0 && rx_is_cpl) |
     (rx_beat_cnt != 2'd0 && rx_tlp_kind == RX_CPLD)
 );
 assign dma_rx_data = m_axis_rx_tdata;
@@ -598,6 +618,7 @@ assign dma_rx_last = m_axis_rx_tlast;
 // DW2[1:0] = PH bits (processing hints), always 0 from real hosts.
 
 logic        bar0_wr_en_q, bar0_rd_en_q;
+logic        bar4_wr_en_q, bar4_rd_en_q;
 logic [15:0] bar0_byte_addr_q;  // 16-bit to match rtl8125b_bar0_regs.mem_byte_addr
 logic [31:0] bar0_wdata_q;
 
@@ -610,32 +631,55 @@ logic  [7:0] bar0_pend_laddr; // LowerAddr for CplD DW2
 // (declared below; forward reference is fine in SV)
 logic cpld_pending;
 
+wire [31:0] rx_addr32 = rx_fourdw_q ? m_axis_rx_tdata[63:32] : m_axis_rx_tdata[31:0];
+// BAR2 is the 64 KB MAC window (bar_hit[2]). BAR0 hit is kept as an alias
+// because some 7-series configs still report the omitted I/O window as BAR0.
+// BAR4 is MSI-X (bar_hit[4]). Ignore MemRd/MemWr with no BAR hit.
+wire rx_bar2 = rx_bar_hit_q[2] | rx_bar_hit_q[0];
+wire rx_bar4 = rx_bar_hit_q[4];
+
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        bar0_wr_en_q    <= 1'b0;
-        bar0_rd_en_q    <= 1'b0;
+        bar0_wr_en_q     <= 1'b0;
+        bar0_rd_en_q     <= 1'b0;
+        bar4_wr_en_q     <= 1'b0;
+        bar4_rd_en_q     <= 1'b0;
         bar0_byte_addr_q <= '0;
-        bar0_wdata_q    <= '0;
-        bar0_pend_reqid <= '0;
-        bar0_pend_tag   <= '0;
-        bar0_pend_laddr <= '0;
+        bar0_wdata_q     <= '0;
+        bar0_pend_reqid  <= '0;
+        bar0_pend_tag    <= '0;
+        bar0_pend_laddr  <= '0;
     end else begin
         bar0_wr_en_q <= 1'b0;
         bar0_rd_en_q <= 1'b0;
+        bar4_wr_en_q <= 1'b0;
+        bar4_rd_en_q <= 1'b0;
 
         if (m_axis_rx_tvalid && rx_beat_cnt == 2'd1) begin
-            bar0_byte_addr_q <= m_axis_rx_tdata[7:0]; // DW2[7:0]
+            bar0_byte_addr_q <= rx_addr32[15:0];
+            bar0_pend_laddr  <= rx_addr32[6:0];
 
-            if (rx_tlp_kind == RX_MWR) begin
-                bar0_wr_en_q <= 1'b1;
-                bar0_wdata_q <= m_axis_rx_tdata[63:32]; // DW3 = payload
+            if (rx_tlp_kind == RX_MWR && !rx_fourdw_q) begin
+                bar0_wdata_q <= m_axis_rx_tdata[63:32];
+                if (rx_bar4)
+                    bar4_wr_en_q <= 1'b1;
+                else if (rx_bar2)
+                    bar0_wr_en_q <= 1'b1;
             end else if (rx_tlp_kind == RX_MRD && !cpld_pending) begin
-                // Only issue read when no CplD is already in-flight
-                bar0_rd_en_q    <= 1'b1;
                 bar0_pend_reqid <= rx_reqid_q;
                 bar0_pend_tag   <= rx_tag_q;
-                bar0_pend_laddr <= m_axis_rx_tdata[7:0]; // LowerAddr = byte offset
+                if (rx_bar4)
+                    bar4_rd_en_q <= 1'b1;
+                else if (rx_bar2)
+                    bar0_rd_en_q <= 1'b1;
             end
+        end else if (m_axis_rx_tvalid && rx_beat_cnt == 2'd2 &&
+                     rx_tlp_kind == RX_MWR && rx_fourdw_q) begin
+            bar0_wdata_q <= m_axis_rx_tdata[31:0];
+            if (rx_bar4)
+                bar4_wr_en_q <= 1'b1;
+            else if (rx_bar2)
+                bar0_wr_en_q <= 1'b1;
         end
     end
 end
@@ -663,6 +707,43 @@ rtl8125b_bar0_regs #(
     .rx_desc_ring_level (16'h0),
     .irq_pulse          (irq_pulse)
 );
+
+// MSI-X table (32 × 16 B at 0x000) and PBA (at 0x800) in BAR4.
+logic [31:0] msix_rdata;
+logic        msix_rvalid;
+logic [4:0]  msix_vec_idx;
+logic [63:0] msix_vec_addr;
+logic [31:0] msix_vec_data;
+logic        msix_vec_mask;
+logic [31:0] msix_pba_set, msix_pba_clear;
+
+msix_table_pba #(
+    .NUM_VECTORS         (rtl8125b_identity_pkg::MSIX_VECTORS),
+    .TABLE_BAR_BYTE_BASE (rtl8125b_identity_pkg::MSIX_TABLE_BYTE_OFF),
+    .PBA_BAR_BYTE_BASE   (rtl8125b_identity_pkg::MSIX_PBA_BYTE_OFF)
+) u_msix_table (
+    .clk           (user_clk),
+    .rst_n         (user_rst_n),
+    .mem_wr_en     (bar4_wr_en_q),
+    .mem_rd_en     (bar4_rd_en_q),
+    .mem_byte_addr (bar0_byte_addr_q),
+    .mem_wdata     (bar0_wdata_q),
+    .mem_be        (rx_firstbe_q),
+    .mem_rdata     (msix_rdata),
+    .mem_rvalid    (msix_rvalid),
+    .vec_rd_idx    (msix_vec_idx),
+    .vec_addr      (msix_vec_addr),
+    .vec_data      (msix_vec_data),
+    .vec_mask      (msix_vec_mask),
+    .pba_set       (msix_pba_set),
+    .pba_clear     (msix_pba_clear),
+    .pba_bits      ()
+);
+
+logic [31:0] cpl_rdata;
+logic        cpl_rvalid;
+assign cpl_rdata  = msix_rvalid ? msix_rdata : bar0_rdata;
+assign cpl_rvalid = msix_rvalid | bar0_rvalid;
 
 // =============================================================================
 // SECTION 8 — CplD Builder (user_clk domain)
@@ -699,11 +780,11 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
     end else begin
         case (cpld_state)
             CPLD_IDLE: begin
-                if (bar0_rvalid) begin
+                if (cpl_rvalid) begin
                     // DW0 = {fmt=010, type=01010, 7'b0, len=1DW} = 32'h4A00_0001
                     // DW1 = {CompleterID[15:0], BCM=0, Status=000(OK), ByteCount=12'd4}
                     cpld_b0 <= {
-                        cfg_completer_id,
+                        (cfg_completer_id == 16'h0) ? 16'h0500 : cfg_completer_id,
                         1'b0,
                         3'b000,
                         12'd4,
@@ -711,7 +792,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                     };
                     // DW2 = {RequesterID[15:0], Tag[7:0], 1'b0, LowerAddr[6:0]}
                     cpld_b1 <= {
-                        bar0_rdata,
+                        cpl_rdata,
                         bar0_pend_reqid,
                         bar0_pend_tag,
                         1'b0,
@@ -758,57 +839,124 @@ always_comb begin
 end
 
 // =============================================================================
-// SECTION 9 — TX Arbitration (user_clk domain)
+// SECTION 9 — MSI-X MemWr + MSI handshake (user_clk domain)
 //
-// Priority: CplD (latency-sensitive) > DMA engine TLPs.
+// MSI-X: host-programmed table in BAR4; emit a 4DW MemWr TLP per irq_pulse.
+// MSI:    cfg_interrupt held until cfg_interrupt_rdy (not a 1-cycle pulse).
+// INTx is not implemented; Realtek uses MSI/MSI-X.
+// =============================================================================
+logic [63:0] msix_tx_tdata;
+logic [7:0]  msix_tx_tkeep;
+logic        msix_tx_tvalid, msix_tx_tlast, msix_tx_tready;
+
+logic [31:0] msix_irq_bus;
+assign msix_irq_bus = {31'b0, irq_pulse & cfg_interrupt_msixenable};
+
+msix_mwr_tx #(
+    .NUM_VECTORS(rtl8125b_identity_pkg::MSIX_VECTORS)
+) u_msix_tx (
+    .clk            (user_clk),
+    .rst_n          (user_rst_n),
+    .irq_req        (msix_irq_bus),
+    .msix_enable    (cfg_interrupt_msixenable),
+    .function_mask  (cfg_interrupt_msixfm),
+    .vec_rd_idx     (msix_vec_idx),
+    .vec_addr       (msix_vec_addr),
+    .vec_data       (msix_vec_data),
+    .vec_mask       (msix_vec_mask),
+    .pba_set        (msix_pba_set),
+    .pba_clear      (msix_pba_clear),
+    .completer_id   (cfg_completer_id),
+    .s_axis_tx_tdata(msix_tx_tdata),
+    .s_axis_tx_tkeep(msix_tx_tkeep),
+    .s_axis_tx_tvalid(msix_tx_tvalid),
+    .s_axis_tx_tlast(msix_tx_tlast),
+    .s_axis_tx_tuser(),
+    .s_axis_tx_tready(msix_tx_tready),
+    .busy           ()
+);
+
+pcie_msi_trigger #(
+    .NUM_VECTORS(8),
+    .STRETCH_CYC(4)
+) u_msi (
+    .pcie_clk               (user_clk),
+    .pcie_rst_n             (user_rst_n),
+    .src_clk                (user_clk),
+    .irq_req                ({7'b0, irq_pulse & ~cfg_interrupt_msixenable}),
+    .vector_mask            (8'h0),
+    .cfg_interrupt          (cfg_interrupt),
+    .cfg_interrupt_rdy      (cfg_interrupt_rdy),
+    .cfg_interrupt_msienable(cfg_interrupt_msienable),
+    .cfg_interrupt_mmenable (cfg_interrupt_mmenable),
+    .cfg_interrupt_assert   (cfg_interrupt_assert),
+    .cfg_interrupt_di       (cfg_interrupt_di),
+    .pending                (),
+    .busy                   ()
+);
+
+// =============================================================================
+// SECTION 10 — TX Arbitration (user_clk domain)
+//
+// Priority: CplD (latency-sensitive) > MSI-X MemWr > DMA engine TLPs.
 // Source is locked for the duration of a TLP (until tlast + ready).
 // =============================================================================
-logic tx_sel;     // 1 = CplD, 0 = DMA
-logic tx_in_tlp;  // 1 = mid-TLP, source locked
+localparam logic [1:0] TXSRC_DMA  = 2'd0;
+localparam logic [1:0] TXSRC_CPLD = 2'd1;
+localparam logic [1:0] TXSRC_MSIX = 2'd2;
+
+logic [1:0] tx_sel;
+logic       tx_in_tlp;
 
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        tx_sel    <= 1'b0;
+        tx_sel    <= TXSRC_DMA;
         tx_in_tlp <= 1'b0;
     end else begin
         if (!tx_in_tlp) begin
-            // Idle — select source (CplD takes priority)
-            tx_sel <= cpld_valid ? 1'b1 : 1'b0;
-            // Track TLP start
+            if (cpld_valid)
+                tx_sel <= TXSRC_CPLD;
+            else if (msix_tx_tvalid)
+                tx_sel <= TXSRC_MSIX;
+            else
+                tx_sel <= TXSRC_DMA;
             if (s_axis_tx_tvalid && s_axis_tx_tready && !s_axis_tx_tlast)
                 tx_in_tlp <= 1'b1;
         end else begin
-            // Mid-TLP — locked to current source until tlast
             if (s_axis_tx_tvalid && s_axis_tx_tready && s_axis_tx_tlast)
                 tx_in_tlp <= 1'b0;
         end
     end
 end
 
-// TX output mux
 always_comb begin
-    if (tx_sel) begin
-        // CplD source
-        s_axis_tx_tdata  = cpld_tdata;
-        s_axis_tx_tkeep  = cpld_tkeep;
-        s_axis_tx_tvalid = cpld_valid;
-        s_axis_tx_tlast  = cpld_tlast;
-        cpld_tx_ready    = s_axis_tx_tready;
-        dma_tx_ready     = 1'b0;
-    end else begin
-        // DMA engine source
-        s_axis_tx_tdata  = dma_tx_data;
-        s_axis_tx_tkeep  = dma_tx_keep;
-        s_axis_tx_tvalid = dma_tx_valid;
-        s_axis_tx_tlast  = dma_tx_last;
-        cpld_tx_ready    = 1'b0;
-        dma_tx_ready     = s_axis_tx_tready;
-    end
-end
+    s_axis_tx_tdata  = dma_tx_data;
+    s_axis_tx_tkeep  = dma_tx_keep;
+    s_axis_tx_tvalid = dma_tx_valid;
+    s_axis_tx_tlast  = dma_tx_last;
+    cpld_tx_ready    = 1'b0;
+    dma_tx_ready     = 1'b0;
+    msix_tx_tready   = 1'b0;
 
-// =============================================================================
-// SECTION 10 — Interrupt (user_clk domain)
-// =============================================================================
-assign cfg_interrupt = irq_pulse;
+    unique case (tx_sel)
+        TXSRC_CPLD: begin
+            s_axis_tx_tdata  = cpld_tdata;
+            s_axis_tx_tkeep  = cpld_tkeep;
+            s_axis_tx_tvalid = cpld_valid;
+            s_axis_tx_tlast  = cpld_tlast;
+            cpld_tx_ready    = s_axis_tx_tready;
+        end
+        TXSRC_MSIX: begin
+            s_axis_tx_tdata  = msix_tx_tdata;
+            s_axis_tx_tkeep  = msix_tx_tkeep;
+            s_axis_tx_tvalid = msix_tx_tvalid;
+            s_axis_tx_tlast  = msix_tx_tlast;
+            msix_tx_tready   = s_axis_tx_tready;
+        end
+        default: begin
+            dma_tx_ready = s_axis_tx_tready;
+        end
+    endcase
+end
 
 endmodule

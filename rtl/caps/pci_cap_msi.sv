@@ -1,11 +1,6 @@
-// MSI Capability (full) — 64-bit addr, 1 vector, per-vector masking.
-// 6 DWs when 64-bit + maskable:
-//   DW0: Msg Ctrl | Next Ptr | Cap ID (0x05)
-//   DW1: Message Address low
-//   DW2: Message Address high
-//   DW3: Reserved | Message Data
-//   DW4: Mask Bits
-//   DW5: Pending Bits
+// MSI Capability (full) — 64-bit addr, per-vector masking, 1 vector.
+// Matches pcie_7x CONFIG (MSI_64_bit, MSI_Capable_Maskable, 1_vector).
+// 6 DWs: MsgCtrl, AddrLo, AddrHi, Data, Mask, Pending.
 
 module pci_cap_msi #(
     parameter logic [7:0] NEXT_PTR          = 8'h70,
@@ -23,8 +18,7 @@ module pci_cap_msi #(
     output logic        msi_enable,
     output logic [2:0]  multi_msg_enable,
     output logic [63:0] msi_address,
-    output logic [15:0] msi_data,
-    output logic        msi_mask_bit0
+    output logic [15:0] msi_data
 );
     localparam logic [7:0] CAP_ID = 8'h05;
 
@@ -38,9 +32,8 @@ module pci_cap_msi #(
     assign multi_msg_enable = mme_q;
     assign msi_address      = {addr_hi_q, addr_lo_q};
     assign msi_data         = data_q;
-    assign msi_mask_bit0    = mask_q[0];
 
-    // [8]=maskable, [7]=64-bit, [6:4]=MME, [3:1]=MMC, [0]=enable
+    // [0] enable, [3:1] MMC, [6:4] MME, [7] 64-bit, [8] PVM
     logic [15:0] msg_ctrl;
     assign msg_ctrl = {7'h00, 1'b1, 1'b1, mme_q, MULTI_MSG_CAPABLE, msi_en_q};
 

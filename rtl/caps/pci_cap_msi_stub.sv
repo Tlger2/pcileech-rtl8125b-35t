@@ -1,5 +1,5 @@
 // MSI Capability — enumeration stub (read-only).
-// 64-bit addr, per-vector masking, 1 vector advertised. 6 DWs.
+// 64-bit addr, per-vector masking, 1 vector. 6 DWs to match pci_cap_msi.
 
 module pci_cap_msi_stub #(
     parameter logic [7:0] NEXT_PTR          = 8'h70,
@@ -14,7 +14,7 @@ module pci_cap_msi_stub #(
 );
     localparam logic [7:0] CAP_ID = 8'h05;
 
-    // [8]=maskable, [7]=64-bit, MMC=0 (1 vector), enable=0
+    // [7] 64-bit, [8] PVM, MMC=0 (1 vector)
     logic [15:0] msg_ctrl;
     assign msg_ctrl = {7'h0, 1'b1, 1'b1, 3'b000, MULTI_MSG_CAPABLE, 1'b0};
 

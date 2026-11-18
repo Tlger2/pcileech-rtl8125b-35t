@@ -34,6 +34,9 @@ module dma_engine #(
     input  logic [15:0] cfg_command,
     input  logic debug_link_up,
     input  logic [31:0] debug_rx_header,
+    // {fc_nph, tx_buf_av[5:0], link_state[2:0], cfg_dstatus[14:0]}
+    input  logic [31:0] debug_link_diag,
+    input  logic [31:0] debug_aer,
     input  logic [2:0]  cfg_max_payload_size,
 
     output logic        tx_req_valid,
@@ -47,9 +50,15 @@ module dma_engine #(
     input  logic [63:0] rx_cpl_data,
     input  logic [7:0]  rx_cpl_keep,
     input  logic        rx_cpl_last,
+    // Every beat the PCIe core presents on m_axis_rx (not just CplD).
+    input  logic        rx_any_valid,
 
     output logic        dma_cpl_seen,
-    input  logic        dma_hold_req
+    input  logic        dma_hold_req,
+    // Pulse from the PCIe core when it discards a TX TLP (malformed / no credits).
+    input  logic        tx_err_drop,
+    // High while a non-posted request is outstanding. Drives cfg_trn_pending.
+    output logic        np_pending
 );
 
 localparam logic [31:0] CTRL_ADDR   = 32'h0000_0000;
@@ -92,13 +101,29 @@ localparam logic [23:0] CPL_TIMEOUT_CYCLES = 24'd12_500_000;
 logic [23:0] cpl_timeout_q;
 
 logic [31:0] debug_tx_beats, debug_cpl_beats;
+logic [15:0] debug_tx_err_cnt;
+logic [15:0] debug_rx_any;
+logic [31:0] debug_bme_wait;   // counts GO_READ/GO_WRITE rejected because BME=0
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
-        debug_tx_beats <= 0;
+        debug_tx_beats  <= 0;
         debug_cpl_beats <= 0;
+        debug_tx_err_cnt <= '0;
+        debug_rx_any    <= '0;
+        debug_bme_wait  <= '0;
     end else begin
         if (tx_req_valid && tx_req_ready) debug_tx_beats <= debug_tx_beats + 1;
         if (rx_cpl_valid) debug_cpl_beats <= debug_cpl_beats + 1;
+        if (rx_any_valid && debug_rx_any != 16'hffff)
+            debug_rx_any <= debug_rx_any + 16'd1;
+        if (tx_err_drop && debug_tx_err_cnt != 16'hffff)
+            debug_tx_err_cnt <= debug_tx_err_cnt + 16'd1;
+        // Count GO pulses that arrive while BME=0 so we can confirm MGMT fix
+        if (rf_we && rf_waddr == CTRL_ADDR && state_q == ST_IDLE &&
+                !dma_hold_req && !cfg_command[2] &&
+                (rf_wdata[0] || rf_wdata[1]) &&
+                debug_bme_wait != 32'hffff_ffff)
+            debug_bme_wait <= debug_bme_wait + 32'd1;
     end
 end
 logic [31:0] rf_rdata_q;
@@ -116,7 +141,23 @@ assign tx_req_last  = tx_last_q;
 
 assign rx_cpl_ready = (state_q == ST_WAIT_CPL);
 assign dma_cpl_seen = (state_q == ST_DONE) && is_read_q;
+// Keep the core from accepting a D3/L1 entry while a MemRd is in flight.
+assign np_pending = (state_q == ST_TX_H0) || (state_q == ST_TX_H1) ||
+                    (state_q == ST_TX_PLD) || (state_q == ST_WAIT_CPL);
 
+// Use the RC-assigned completer ID when available. After a JTAG bitstream
+// reload the PCIe link retrains but the RC does not re-issue config space
+// transactions, so cfg_completer_id stays 0x0000. Fall back to the known
+// BDF (Bus=5, Dev=0, Fn=0) so MemRd TLP headers carry the correct Requester
+// ID and the RC routes CplD back to the right downstream port.
+// FIXED: was 16'h00E4 (Root Port BDF) which caused the RC to route all
+// CplD completions back to the Root Port instead of the FPGA endpoint,
+// resulting in rx_any=0 / completion timeout on every DMA read.
+localparam logic [15:0] FALLBACK_BDF = 16'h0500;
+wire [15:0] eff_completer_id =
+    (cfg_completer_id == 16'h0000) ? FALLBACK_BDF : cfg_completer_id;
+
+logic        fourdw_q;
 logic [9:0] pld_idx_q;          // DWs already emitted on TX_PLD
 logic [9:0] pld_remain;
 assign pld_remain = (xfer_len_q > pld_idx_q) ? (xfer_len_q - pld_idx_q) : 10'd0;
@@ -180,6 +221,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
         cpl_got_q      <= '0;
         cpl_need_q     <= '0;
         cpl_timeout_q  <= 24'h0;
+        fourdw_q       <= 1'b0;
         pld_idx_q      <= '0;
         rf_rdata_q     <= 32'h0;
         rf_rvalid_q    <= 1'b0;
@@ -203,15 +245,20 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                     length_q <= clamp_len(rf_wdata, mps_dw);
                 end
                 CTRL_ADDR: begin
-                    if (state_q == ST_IDLE && !dma_hold_req) begin
+                    if (state_q == ST_IDLE && !dma_hold_req && cfg_command[2]) begin
                         xfer_len_q <= go_len;
                         if (rf_wdata[0]) begin
                             is_read_q  <= 1'b1;
                             status_q   <= 32'h1;
                             pend_tag_q <= tag_q;
                             tag_q      <= tag_q + 8'd1;
-                            dw0_q <= 32'h2000_0000 | {22'h0, go_len};
-                            dw1_q <= {cfg_completer_id, tag_q,
+                            // 4DW only when the high address is nonzero. A
+                            // 4DW MemRd with Addr[63:32]=0 is legal, but this
+                            // root complex accepts the beat and returns no Cpl.
+                            fourdw_q <= (addr_hi_q != 32'h0);
+                            dw0_q <= (addr_hi_q != 32'h0 ? 32'h2000_0000 : 32'h0)
+                                   | {22'h0, go_len};
+                            dw1_q <= {eff_completer_id, tag_q,
                                       (go_len == 10'd1) ? 4'h0 : 4'hF, 4'hF};
                             dw2_q <= addr_hi_q;
                             dw3_q <= {addr_lo_q[31:2], 2'b00};
@@ -221,7 +268,7 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                             status_q   <= 32'h1;
                             tag_q      <= tag_q + 8'd1;
                             dw0_q <= 32'h6000_0000 | {22'h0, go_len};
-                            dw1_q <= {cfg_completer_id, tag_q,
+                            dw1_q <= {eff_completer_id, tag_q,
                                       (go_len == 10'd1) ? 4'h0 : 4'hF, 4'hF};
                             dw2_q <= addr_hi_q;
                             dw3_q <= {addr_lo_q[31:2], 2'b00};
@@ -242,11 +289,15 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 WDATA_ADDR:   rf_rdata_q <= wdata_q;
                 STATUS_ADDR:  rf_rdata_q <= status_q;
                 RDATA_ADDR:   rf_rdata_q <= rdata_q;
-                32'h20: rf_rdata_q <= {cfg_completer_id, cfg_command};
+                32'h20: rf_rdata_q <= {eff_completer_id, cfg_command};
                 32'h24: rf_rdata_q <= {26'b0,state_q,tx_req_ready,tx_req_valid,debug_link_up};
                 32'h28: rf_rdata_q <= debug_tx_beats;
-                32'h2c: rf_rdata_q <= debug_cpl_beats;
+                32'h2c: rf_rdata_q <= {debug_rx_any, debug_cpl_beats[15:0]};
                 32'h30: rf_rdata_q <= debug_rx_header;
+                // {tx_err_drop count, raw cfg completer id (0 = not latched)}
+                32'h34: rf_rdata_q <= {debug_tx_err_cnt, cfg_completer_id};
+                32'h38: rf_rdata_q <= debug_link_diag;
+                32'h3C: rf_rdata_q <= debug_bme_wait;
                 LENGTH_ADDR:  rf_rdata_q <= {22'h0, length_q};
                 default:      rf_rdata_q <= 32'hDEAD_BEEF;
             endcase
@@ -263,7 +314,8 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                     tx_last_q  <= 1'b0;
                     pld_idx_q  <= 10'd0;
                 end else if (tx_req_ready) begin
-                    tx_data_q <= {dw3_q, dw2_q};
+                    tx_data_q <= fourdw_q ? {dw3_q, dw2_q} : {32'h0, dw3_q};
+                    tx_keep_q <= fourdw_q ? 8'hFF : 8'h0F;
                     tx_last_q <= is_read_q;
                     state_q   <= ST_TX_H1;
                 end
@@ -330,9 +382,17 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                     state_q        <= ST_DONE;
                 end else if (rx_cpl_valid) begin
                     if (!cpl_hdr0_q) begin
-                        // Beat 0 of each CplD: {DW1, DW0}. Completions may split.
-                        cpl_hdr0_q     <= 1'b1;
-                        cpl_need_dw2_q <= 1'b1;
+                        // Beat 0: {DW1, DW0}. DW1[15:13] is Completer Status.
+                        // 000=SC, 001=UR, 010=CRS, 100=CA. Anything but SC is
+                        // a failed read — don't wait for a data beat that
+                        // a 3DW Cpl (no payload) will never send.
+                        if (rx_cpl_data[47:45] != 3'b000) begin
+                            status_q <= 32'h4;
+                            state_q  <= ST_DONE;
+                        end else begin
+                            cpl_hdr0_q     <= 1'b1;
+                            cpl_need_dw2_q <= 1'b1;
+                        end
                     end else if (cpl_need_dw2_q) begin
                         // Beat 1: {data0, DW2}. Tag lives in DW2[15:8].
                         cpl_need_dw2_q <= 1'b0;
