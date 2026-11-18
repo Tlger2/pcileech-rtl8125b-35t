@@ -292,15 +292,38 @@ foreach name {synth_1 impl_1} {
         file copy $log [file join $archive_dir ${name}_[file tail $log]]
     }
 }
+proc poll_run {name timeout_s} {
+    set t0 [clock seconds]
+    while {1} {
+        set st [get_property STATUS [get_runs $name]]
+        set pr [get_property PROGRESS [get_runs $name]]
+        puts "POLL $name progress=$pr status=$st"
+        if {[string match "*Complete*" $st]} {
+            return 1
+        }
+        if {[string match "*Fail*" $st] || [string match "*Error*" $st]} {
+            puts "RUN_FAILED $name: $st"
+            return 0
+        }
+        if {([clock seconds] - $t0) > $timeout_s} {
+            puts "RUN_TIMEOUT $name: $st"
+            return 0
+        }
+        after 15000
+    }
+}
 proc run_step {name step} {
     launch_runs $name -to_step $step -jobs 4
-    # wait_on_run -timeout is seconds. Synth/impl on XC7A35T is many minutes;
-    # a 20 s cap would abort every laptop bitstream.
-    catch {wait_on_run $name} wait_message
+    # wait_on_run has hung after synth on this host; poll STATUS instead.
+    set timeout_s 3600
+    if {$name eq "synth_1"} { set timeout_s 1800 }
+    if {![poll_run $name $timeout_s]} {
+        error "$name failed at $step: [get_property STATUS [get_runs $name]]. See [get_property DIRECTORY [get_runs $name]]/runme.log"
+    }
     set status [get_property STATUS [get_runs $name]]
     puts "INFO: $name status: $status"
-    if {![string match "${step} Complete*" $status]} {
-        error "$name failed at $step: $status ($wait_message). See [get_property DIRECTORY [get_runs $name]]/runme.log"
+    if {![string match "*Complete*" $status]} {
+        error "$name failed at $step: $status. See [get_property DIRECTORY [get_runs $name]]/runme.log"
     }
 }
 # Force IP OOC re-synthesis — Vivado reuses the cached DCP unless we reset the
@@ -313,11 +336,13 @@ if {[llength $ip_synth_run]} {
     puts "INFO: Resetting $ip_synth_run_name to force OOC re-synthesis from XCI"
     reset_run $ip_synth_run_name
     launch_runs $ip_synth_run_name -jobs 4
-    catch {wait_on_run $ip_synth_run_name} ip_wait_msg
+    if {![poll_run $ip_synth_run_name 1800]} {
+        error "$ip_synth_run_name failed: [get_property STATUS [get_runs $ip_synth_run_name]]. See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
+    }
     set ip_status [get_property STATUS [get_runs $ip_synth_run_name]]
     puts "INFO: $ip_synth_run_name status: $ip_status"
     if {![string match "*Complete*" $ip_status]} {
-        error "$ip_synth_run_name failed: $ip_status ($ip_wait_msg). See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
+        error "$ip_synth_run_name failed: $ip_status. See [get_property DIRECTORY [get_runs $ip_synth_run_name]]/runme.log"
     }
 } else {
     puts "WARN: Run $ip_synth_run_name not found — IP OOC synth may reuse stale DCP"
