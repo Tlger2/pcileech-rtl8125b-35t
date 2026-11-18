@@ -953,6 +953,17 @@ def _identity_from_rtl() -> dict | None:
     }
 
 
+# Overlay hardcoded DONOR_* with the SystemVerilog package when present.
+_ident_sv = _identity_from_rtl()
+if _ident_sv is not None:
+    DONOR_VID = _ident_sv["vid"]
+    DONOR_DID = _ident_sv["did"]
+    DONOR_REV = _ident_sv["rev"]
+    DONOR_SVID = _ident_sv["svid"]
+    DONOR_SSID = _ident_sv["ssid"]
+    DONOR_MAC = _ident_sv["mac"]
+
+
 # ------------------------------------------------------------------
 # Self-test: offline bijection + round-trip framing (no hardware)
 # ------------------------------------------------------------------

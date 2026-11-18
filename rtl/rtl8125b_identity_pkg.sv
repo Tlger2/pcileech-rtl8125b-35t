@@ -1,6 +1,14 @@
 // Single source of RTL8125B donor identity.
-// Live pcie_7x CONFIG, soft Type-0 header, BAR0 MAC, DSN, and cfg_dsn
-// must all consume these values so TB and silicon cannot drift.
+// Live pcie_7x CONFIG (vivado_build.tcl parses this file), soft Type-0
+// header, BAR2 MAC, DSN, cfg_dsn, and host/ft601_client.py must all
+// consume these values so TB and silicon cannot drift.
+//
+// Onboard 8125B on this machine (PnP, 2026-11-18): 10EC:8125
+// SUBSYS 87D7:1043 REV_04, Realtek inbox rtcx21x64, Gen2 x1, 64 KB + 16 KB
+// memory BARs, no I/O. Config-space cap/ECAP DWs were not readable from
+// user mode without a dump tool, so SSID/rev stay the working 10EC:0123
+// rev 05 donor (Null rtcx21 bind / DMA after cold boot). Do not invent
+// SSIDs. BAR/cap behaviour is deepened toward that onboard 8125B instead.
 
 package rtl8125b_identity_pkg;
 
@@ -11,7 +19,8 @@ package rtl8125b_identity_pkg;
     localparam logic [15:0] SUBSYS_VENDOR_ID = 16'h10EC;
     localparam logic [15:0] SUBSYS_ID        = 16'h0123;
 
-    // Realtek OUI 00:E0:4C. Unique NIC, not 12:34:56 and not zero.
+    // Realtek OUI 00:E0:4C. Unique NIC, not 12:34:56, not zero, and not
+    // a clone of the onboard MAC (two adapters on one host).
     localparam logic [47:0] MAC_ADDR = 48'h00_E0_4C_7A_3B_91;
 
     // DSN layout matching Realtek captures:

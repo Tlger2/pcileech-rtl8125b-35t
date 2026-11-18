@@ -102,7 +102,7 @@ logic [23:0] cpl_timeout_q;
 
 logic [31:0] debug_tx_beats, debug_cpl_beats;
 logic [15:0] debug_tx_err_cnt;
-logic [15:0] debug_rx_any;
+logic [31:0] debug_rx_any;
 logic [31:0] debug_bme_wait;   // counts GO_READ/GO_WRITE rejected because BME=0
 always_ff @(posedge user_clk or negedge user_rst_n) begin
     if (!user_rst_n) begin
@@ -114,8 +114,8 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
     end else begin
         if (tx_req_valid && tx_req_ready) debug_tx_beats <= debug_tx_beats + 1;
         if (rx_cpl_valid) debug_cpl_beats <= debug_cpl_beats + 1;
-        if (rx_any_valid && debug_rx_any != 16'hffff)
-            debug_rx_any <= debug_rx_any + 16'd1;
+        if (rx_any_valid && debug_rx_any != 32'hffff_ffff)
+            debug_rx_any <= debug_rx_any + 32'd1;
         if (tx_err_drop && debug_tx_err_cnt != 16'hffff)
             debug_tx_err_cnt <= debug_tx_err_cnt + 16'd1;
         // Count GO pulses that arrive while BME=0 so we can confirm MGMT fix
@@ -145,17 +145,19 @@ assign dma_cpl_seen = (state_q == ST_DONE) && is_read_q;
 assign np_pending = (state_q == ST_TX_H0) || (state_q == ST_TX_H1) ||
                     (state_q == ST_TX_PLD) || (state_q == ST_WAIT_CPL);
 
-// Use the RC-assigned completer ID when available. After a JTAG bitstream
-// reload the PCIe link retrains but the RC does not re-issue config space
-// transactions, so cfg_completer_id stays 0x0000. Fall back to the known
-// BDF (Bus=5, Dev=0, Fn=0) so MemRd TLP headers carry the correct Requester
-// ID and the RC routes CplD back to the right downstream port.
-// FIXED: was 16'h00E4 (Root Port BDF) which caused the RC to route all
-// CplD completions back to the Root Port instead of the FPGA endpoint,
-// resulting in rx_any=0 / completion timeout on every DMA read.
-localparam logic [15:0] FALLBACK_BDF = 16'h0500;
+// Completer/Requester ID: latch the last non-zero cfg_completer_id.
+// GSR-zeroed; not cleared by user_reset, so a link retrain that reports 0
+// keeps the BDF from the last successful enumeration. A hardcoded
+// FALLBACK_BDF=0x0500 was this machine's cold-boot bus and is wrong if
+// the device enumerates elsewhere. SRAM-only reload re-GSRs this to 0
+// and the RC does not re-enumerate — CplD/DMA then need a cold boot.
+logic [15:0] latched_completer_id = 16'h0;
+always_ff @(posedge user_clk) begin
+    if (cfg_completer_id != 16'h0)
+        latched_completer_id <= cfg_completer_id;
+end
 wire [15:0] eff_completer_id =
-    (cfg_completer_id == 16'h0000) ? FALLBACK_BDF : cfg_completer_id;
+    (cfg_completer_id != 16'h0) ? cfg_completer_id : latched_completer_id;
 
 logic        fourdw_q;
 logic [9:0] pld_idx_q;          // DWs already emitted on TX_PLD
@@ -289,12 +291,13 @@ always_ff @(posedge user_clk or negedge user_rst_n) begin
                 WDATA_ADDR:   rf_rdata_q <= wdata_q;
                 STATUS_ADDR:  rf_rdata_q <= status_q;
                 RDATA_ADDR:   rf_rdata_q <= rdata_q;
+                32'h1C: rf_rdata_q <= debug_rx_any;
                 32'h20: rf_rdata_q <= {eff_completer_id, cfg_command};
                 32'h24: rf_rdata_q <= {26'b0,state_q,tx_req_ready,tx_req_valid,debug_link_up};
                 32'h28: rf_rdata_q <= debug_tx_beats;
-                32'h2c: rf_rdata_q <= {debug_rx_any, debug_cpl_beats[15:0]};
+                32'h2c: rf_rdata_q <= {debug_rx_any[15:0], debug_cpl_beats[15:0]};
                 32'h30: rf_rdata_q <= debug_rx_header;
-                // {tx_err_drop count, raw cfg completer id (0 = not latched)}
+                // {tx_err_drop count, raw cfg completer id (0 until latched)}
                 32'h34: rf_rdata_q <= {debug_tx_err_cnt, cfg_completer_id};
                 32'h38: rf_rdata_q <= debug_link_diag;
                 32'h3C: rf_rdata_q <= debug_bme_wait;

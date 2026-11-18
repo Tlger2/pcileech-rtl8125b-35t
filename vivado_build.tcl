@@ -123,16 +123,44 @@ if {[llength [get_ips -quiet pcie_7x_0]] == 0} {
     puts "INFO: pcie_7x_0 IP already exists; re-applying donor CONFIG"
 }
 
+# Identity from rtl8125b_identity_pkg.sv — do not duplicate VID/DID/SSID here.
+proc identity_from_sv {path} {
+    set fh [open $path r]
+    set text [read $fh]
+    close $fh
+    array set id {}
+    foreach {key pat} {
+        VENDOR_ID        {VENDOR_ID\s*=\s*16'h([0-9A-Fa-f]+)}
+        DEVICE_ID        {DEVICE_ID\s*=\s*16'h([0-9A-Fa-f]+)}
+        REVISION_ID      {REVISION_ID\s*=\s*8'h([0-9A-Fa-f]+)}
+        SUBSYS_VENDOR_ID {SUBSYS_VENDOR_ID\s*=\s*16'h([0-9A-Fa-f]+)}
+        SUBSYS_ID        {SUBSYS_ID\s*=\s*16'h([0-9A-Fa-f]+)}
+    } {
+        if {![regexp -nocase $pat $text -> v]} {
+            error "identity_from_sv: missing $key in $path"
+        }
+        set id($key) [string toupper $v]
+        if {[string length $id($key)] == 1} {
+            set id($key) "0$id($key)"
+        }
+    }
+    return [array get id]
+}
+array set IDENT [identity_from_sv [file join $rtl_dir rtl8125b_identity_pkg.sv]]
+puts "INFO: identity VID=$IDENT(VENDOR_ID) DID=$IDENT(DEVICE_ID) REV=$IDENT(REVISION_ID) SVID=$IDENT(SUBSYS_VENDOR_ID) SSID=$IDENT(SUBSYS_ID)"
+
 set core [get_ips pcie_7x_0]
+# Advertise Gen2 x1 (Artix-7 GTP max; onboard 8125B is Gen2 x1). No Gen3.
+# Wrapper may still direct-retrain to Gen1 after SRAM loads for SI.
 set_property -dict [list \
-    CONFIG.Vendor_ID                {10EC} \
-    CONFIG.Device_ID                {8125} \
-    CONFIG.Revision_ID              {05} \
-    CONFIG.Subsystem_Vendor_ID      {10EC} \
-    CONFIG.Subsystem_ID             {0123} \
+    CONFIG.Vendor_ID                $IDENT(VENDOR_ID) \
+    CONFIG.Device_ID                $IDENT(DEVICE_ID) \
+    CONFIG.Revision_ID              $IDENT(REVISION_ID) \
+    CONFIG.Subsystem_Vendor_ID      $IDENT(SUBSYS_VENDOR_ID) \
+    CONFIG.Subsystem_ID             $IDENT(SUBSYS_ID) \
     CONFIG.Base_Class_Menu          {Network_controller} \
     CONFIG.Sub_Class_Interface_Menu {Ethernet_controller} \
-    CONFIG.Link_Speed               {2.5_GT/s} \
+    CONFIG.Link_Speed               {5.0_GT/s} \
     CONFIG.Maximum_Link_Width       {X1} \
     CONFIG.Max_Payload_Size         {256_bytes} \
     CONFIG.Extended_Tag_Field       {false} \
@@ -391,10 +419,13 @@ write_bitstream -force $bit_path
 puts "INFO: Bitstream: $bit_path"
 
 # Generate SPI-flashable .bin image (SPIx4). CaptainDMA 35T flash is ISSI
-# IS25LP032 (32 Mbit). XC7A35T bitstream is 16.85 Mbit, so size 16 is too
-# small; size 32 matches the part. OFL can also program the .bit directly.
+# IS25LP032 (32 Mbit), not Winbond W25Q64. XC7A35T bitstream is 16.85 Mbit,
+# so size 16 is too small; size 32 matches the part.
 write_cfgmem -format bin -interface SPIx4 -size 32 \
     -loadbit "up 0x0 $bit_path" \
     -force $bin_path
 puts "INFO: SPI flash image: $bin_path"
-puts "INFO: Flash with: openFPGALoader -c ft4232 --fpga-part xc7a35tfgg484 -f --verify --unprotect-flash $bin_path"
+puts "INFO: Flash with OFL's spiOverJtag_xc7a35tfgg484 (not tools/bscan_spi_xc7a35t.bit):"
+puts "INFO:   C:\\msys64\\ucrt64\\bin\\openFPGALoader.exe -c ft4232 --fpga-part xc7a35tfgg484 -f --verify --unprotect-flash $bit_path"
+puts "INFO: Then SRAM: openFPGALoader.exe -c ft4232 --fpga-part xc7a35tfgg484 -m $bit_path"
+puts "INFO: CplD/DMA after SRAM-only still needs a cold boot; do not claim re-enumerate without it."
